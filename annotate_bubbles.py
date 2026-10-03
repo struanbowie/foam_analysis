@@ -39,9 +39,31 @@ def layer_to_bubbles(layer):
     for d, t in zip(layer.data, layer.shape_type):
         if t in ("ellipse", "polygon"):
             out.append(dict(type=t, data=np.asarray(d)[:, -2:].tolist()))
-        else:
+        elif t != "rectangle":   # rectangles are treated as ROIs (see move_rectangles_to_rois)
             print(f"  skipping unsupported shape type '{t}' in bubbles layer (use ellipse or polygon)")
     return out
+
+
+def rectangles_in(layer):
+    """Rectangles accidentally drawn on the bubbles layer (indices, corner arrays)."""
+    idx = [i for i, t in enumerate(layer.shape_type) if t == "rectangle"]
+    return idx, [np.asarray(layer.data[i])[:, -2:] for i in idx]
+
+
+def move_rectangles_to_rois(bubbles, rois):
+    """Move rectangles from the bubbles layer to the 'fully annotated' layer (visual fix)."""
+    idx, rects = rectangles_in(bubbles)
+    if not idx:
+        return 0
+    try:
+        rois.add(rects, shape_type="rectangle")
+        bubbles.selected_data = set(idx)
+        bubbles.remove_selected()
+    except Exception as e:   # e.g. window already closed: the save below still counts them as ROIs
+        print("  (could not move rectangles between layers:", e, ")")
+        return -len(idx)
+    print(f"  moved {len(idx)} rectangle(s) from 'bubbles' to 'fully annotated'")
+    return len(idx)
 
 
 def layer_to_rois(layer):
@@ -110,6 +132,9 @@ def main():
 
     rois = viewer.add_shapes([rect_corners(*r) for r in ann.get("rois", [])], shape_type="rectangle",
                              name="fully annotated", edge_color="yellow", face_color=[0, 0, 0, 0], edge_width=0.6)
+    rois.current_edge_color = "yellow"
+    rois.current_face_color = [0, 0, 0, 0]
+    rois.current_edge_width = 0.6
     bub = ann.get("bubbles", [])
     bubbles = viewer.add_shapes([np.asarray(b["data"]) for b in bub], shape_type=[b["type"] for b in bub],
                                 name="bubbles", edge_color="lime", face_color=[0, 0, 0, 0], edge_width=0.4)
@@ -121,7 +146,12 @@ def main():
     status = QLabel("")
 
     def save(*_):
-        data = dict(image=ann["image"], bubbles=layer_to_bubbles(bubbles), rois=layer_to_rois(rois))
+        moved = move_rectangles_to_rois(bubbles, rois)
+        roi_list = layer_to_rois(rois)
+        if moved < 0:   # could not move them in the viewer: include them directly
+            roi_list += [[float(r[:, 0].min()), float(r[:, 1].min()), float(r[:, 0].max()), float(r[:, 1].max())]
+                         for r in rectangles_in(bubbles)[1]]
+        data = dict(image=ann["image"], bubbles=layer_to_bubbles(bubbles), rois=roi_list)
         tmp = args.json + ".tmp"
         with open(tmp, "w") as f:
             json.dump(data, f)
@@ -138,7 +168,8 @@ def main():
     lay.addWidget(btn)
     lay.addWidget(QLabel("bubbles layer: E = ellipse, P = polygon\n"
                          "select (S) a shape to move / rotate / resize it\n"
-                         "fully annotated layer: R = rectangle"))
+                         "fully annotated layer: R = rectangle\n"
+                         "(rectangles drawn on the bubbles layer are\n moved to 'fully annotated' on save)"))
     lay.addWidget(status)
     lay.addStretch()
     viewer.window.add_dock_widget(w, name="save", area="right")
