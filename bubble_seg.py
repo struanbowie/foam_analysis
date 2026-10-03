@@ -15,7 +15,8 @@ Stages
 6. Quality control + duplicate suppression -> one table of bubbles.
 
 All length parameters in ``Config`` are given in ORIGINAL image pixels; they
-are converted internally to the (possibly down-scaled) working resolution.
+are converted internally to the working resolution (``work_scale``; the defaults
+are for the clean 400x250 native exports, processed upsampled 2.5x).
 All results are reported in original pixels (and micrometres if the pixel
 size is known).
 """
@@ -45,44 +46,41 @@ class Config:
     frame_glob: str = "animations/jpg_r563_svd_normalised_tr050/*.jpg"
 
     # --- pixel size ----------------------------------------------------------
-    um_per_px: Optional[float] = None          # None -> try to measure the scale bar
+    um_per_px: Optional[float] = 3.2           # HPV-X2 effective pixel size; None -> measure a burned-in scale bar
     scale_bar_um: float = 100.0                # physical length of the burned-in bar
     scale_bar_box: tuple = (0.85, 1.0, 0.80, 1.0)  # (y0, y1, x0, x1) fractions to search
 
     # --- regions to ignore -----------------------------------------------------
-    # boxes as (y0, y1, x0, x1) FRACTIONS of the image size (timestamp, scale bar ...)
-    exclude_boxes: list = field(default_factory=lambda: [
-        (0.00, 0.075, 0.80, 1.00),   # timestamp text, top right
-        (0.89, 1.00, 0.86, 1.00),    # scale bar + label, bottom right
-    ])
+    # boxes as (y0, y1, x0, x1) FRACTIONS of the image size, e.g. burned-in text (none in the clean exports)
+    exclude_boxes: list = field(default_factory=list)
     # polygons as lists of (x, y) ORIGINAL-pixel vertices, e.g. a fibre you never want
     exclude_polygons: list = field(default_factory=list)
 
     # --- static structures (fibres, film wrinkles) ------------------------------
     # 'none' | 'lines' (single frame: long straight ridges) | 'temporal' (series) | 'both'
     static_mode: str = "lines"
-    line_min_length: float = 120.0     # px; straight ridge segments longer than this are "static"
-    line_max_gap: float = 20.0         # px; gap allowed inside one segment
+    line_min_length: float = 24.0      # px; straight ridge segments longer than this are "static"
+    line_max_gap: float = 4.0          # px; gap allowed inside one segment
     line_ridge_z: float = 3.0          # ridge z-score used to find lines
-    line_width: float = 16.0           # px; width painted around each detected line
+    line_width: float = 3.2            # px; width painted around each detected line
     temporal_n_frames: int = 40        # frames sampled from frame_glob for the temporal mask
     temporal_percentile: float = 20.0  # ridge must be present in >= (100 - p)% of frames
     temporal_ridge_z: float = 3.0
-    static_dilate: float = 4.0         # px dilation of the final static mask
+    static_dilate: float = 0.8         # px dilation of the final static mask
 
     # --- preprocessing ---------------------------------------------------------
-    work_scale: float = 0.5            # down-scale factor for processing (your JPGs are ~5x upsampled)
-    bg_sigma: float = 120.0            # px; Gaussian scale of the illumination background
+    work_scale: float = 2.5            # resampling factor for processing (>1 upsamples the 400x250 native frames)
+    bg_sigma: float = 24.0             # px; Gaussian scale of the illumination background
     bg_mode: str = "divide"            # 'divide' | 'subtract'
     denoise: str = "gaussian"          # 'gaussian' | 'nlm' | 'tv' | 'none'
-    denoise_sigma: float = 5.0         # px (gaussian)
+    denoise_sigma: float = 1.0         # px (gaussian)
     nlm_h: float = 0.8                 # NLM strength, multiples of the estimated noise sigma
     tv_weight: float = 0.05            # TV-Chambolle weight
     stretch_percentiles: tuple = (0.5, 99.5)
     use_clahe: bool = True
-    clahe_kernel: float = 256.0        # px
+    clahe_kernel: float = 51.2         # px
     clahe_clip: float = 0.01
-    ridge_sigmas: tuple = (4.0, 6.0, 8.0)  # px; ~half the rim thickness in original px
+    ridge_sigmas: tuple = (0.8, 1.2, 1.6)  # px; ~half the rim thickness in original px
 
     # --- Cellpose-SAM ------------------------------------------------------------
     use_cellpose: bool = True
@@ -90,7 +88,7 @@ class Config:
     cp_gpu: bool = True
     cp_input: str = "clahe"            # 'norm' | 'clahe' | 'ridge' | 'clahe+ridge'
     # one Cellpose pass per entry; diameter in ORIGINAL px, None = model default (no rescale)
-    cp_diameters: list = field(default_factory=lambda: [None, 120.0])
+    cp_diameters: list = field(default_factory=lambda: [None, 24.0])
     cp_flow_threshold: float = 0.4     # higher -> more (less certain) masks
     cp_cellprob_threshold: float = 0.0  # lower (e.g. -2) -> more / larger masks
     cp_min_size: int = 15              # working px
@@ -102,11 +100,11 @@ class Config:
 
     # --- circle fitting + quality control -----------------------------------------
     rim_z: float = 2.5                 # ridge z-score for a pixel to count as "rim"
-    rim_search: float = 2.0            # px; radial tolerance when looking for the rim
-    ransac_tol: float = 4.0            # px; inlier distance for RANSAC circle fit
+    rim_search: float = 0.4            # px; radial tolerance when looking for the rim
+    ransac_tol: float = 0.8            # px; inlier distance for RANSAC circle fit
     ransac_iters: int = 300
-    min_radius: float = 5.0            # px
-    max_radius: float = 400.0          # px
+    min_radius: float = 1.0            # px
+    max_radius: float = 80.0           # px
     min_arc_support_mask: float = 0.35  # mask-based (Cellpose/watershed): fraction of visible circumference on a rim
     min_arc_support_hough: float = 0.70
     min_ring_contrast_mask: float = 1.0     # rim z minus mean z just inside/outside the ring
@@ -119,14 +117,14 @@ class Config:
     # --- classical watershed baseline (optional extra candidate source) ----------------
     use_watershed: bool = False
     ws_rim_z: float = 2.0              # pixels below this rim z-score count as bubble interior
-    ws_min_distance: float = 8.0       # px between seeds
-    ws_min_inner_radius: float = 6.0   # px; seeds need at least this distance to a rim
-    ws_min_area: float = 120.0         # px^2
+    ws_min_distance: float = 1.6       # px between seeds
+    ws_min_inner_radius: float = 1.2   # px; seeds need at least this distance to a rim
+    ws_min_area: float = 4.8           # px^2
 
     # --- Hough completion -------------------------------------------------------------
     use_hough: bool = True
-    hough_radii: tuple = (25.0, 220.0)  # px range (small ones are left to Cellpose)
-    hough_radius_step: float = 2.0      # px
+    hough_radii: tuple = (5.0, 44.0)   # px range (small ones are left to Cellpose)
+    hough_radius_step: float = 0.4      # px
     hough_edge_z: float = 3.0
     hough_peak_threshold: float = 0.12  # fraction of circumference voting (low: scoring does the filtering)
     hough_peaks_per_radius: int = 200

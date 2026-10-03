@@ -3,9 +3,13 @@
 Bubble segmentation for high-speed foam image series.
 
 * `bubble_segmentation.ipynb`: step-by-step pipeline on one frame, with every tunable parameter in a single CONFIG cell.
+* `preprocessing/normalise_runs_TKM_fast_2.ipynb`: raw run → SVD-normalised frames + GIF (no annotations, native resolution).
 * `bubble_seg.py`: the pipeline functions (preprocessing, Cellpose-SAM, circle fitting, Hough completion, QC, batch driver).
 
-Pipeline: overlay masking + scale-bar calibration → masked background flattening, denoising, CLAHE and a
+Input: the clean native 400×250 frames (3.2 µm/px, no timestamp/scale bar) exported by
+`preprocessing/normalise_runs_TKM_fast_2.ipynb` (SVD flat-field normalisation of the raw HPV-X2 runs).
+
+Pipeline: optional exclusion regions → masked background flattening, denoising, CLAHE and a
 noise-normalised rim (dark-ridge) map → static-structure mask (fibres) → Cellpose-SAM (multi-diameter passes) →
 robust circle fit per mask refined on the rim map (recovers partly hidden bubbles) → optional ridge-Hough completion
 for large bubbles → quality scores + duplicate suppression → CSV of x, y, r (px and µm) per bubble.
