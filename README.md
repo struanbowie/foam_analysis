@@ -17,6 +17,16 @@ module load maxwell python/3.11
 python -m venv ~/venvs/foam && source ~/venvs/foam/bin/activate
 pip install -r requirements.txt
 python -m ipykernel install --user --name foam --display-name "foam (cellpose)"
-python -c "from cellpose import models; models.CellposeModel(gpu=False)"   # downloads Cellpose-SAM weights once
+# download the Cellpose-SAM weights once (~1.2 GB) on a node with internet, e.g. a login node.
+# gpu=False only because login nodes have no GPU; it is just a download. The notebook itself
+# runs on the GPU (cp_gpu=True in CONFIG).
+python -c "from cellpose import models; models.CellposeModel(gpu=False)"
 ```
+On a GPU node (e.g. A100), check that PyTorch sees the card before running the notebook:
+```bash
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"   # expect: True NVIDIA A100...
+```
+If this prints `False`, the installed torch wheel does not match the node's CUDA driver: reinstall torch with the
+CUDA build from https://pytorch.org/get-started/locally/ (e.g. `--index-url https://download.pytorch.org/whl/cu124`).
+
 Open the notebook from the repository root (paths are relative to it) on a GPU JupyterHub session with the `foam (cellpose)` kernel.
