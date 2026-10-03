@@ -1,0 +1,10 @@
+# Cellpose >= 4 ships Cellpose-SAM ("cpsam"). On Maxwell GPU nodes the default PyPI torch wheel includes CUDA.
+cellpose>=4.0
+torch
+numpy
+scipy
+scikit-image>=0.22
+pandas
+matplotlib
+tifffile
+ipykernel
