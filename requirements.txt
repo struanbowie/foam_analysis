@@ -1,6 +1,7 @@
 # Cellpose >= 4 ships Cellpose-SAM ("cpsam"). On Maxwell GPU nodes the default PyPI torch wheel includes CUDA.
 cellpose>=4.0
 torch
+torchvision
 numpy
 scipy
 scikit-image>=0.22
@@ -8,3 +9,5 @@ pandas
 matplotlib
 tifffile
 ipykernel
+# annotation GUI for bubble_training.ipynb (install where you annotate, e.g. a FastX desktop session):
+# napari[all]

@@ -4,6 +4,9 @@ Bubble segmentation for high-speed foam image series.
 
 * `bubble_segmentation.ipynb`: step-by-step pipeline on one frame, with every tunable parameter in a single CONFIG cell.
 * `preprocessing/normalise_runs_TKM_fast_2.ipynb`: raw run → SVD-normalised frames + GIF (no annotations, native resolution).
+* `bubble_training.ipynb` + `bubble_rcnn.py` + `annotate_bubbles.py`: **trainable** pipeline. Hand-annotate bubbles
+  in napari (one ellipse/polygon per bubble, overlaps allowed), train a Mask R-CNN (per-instance masks, so overlapping,
+  nested and non-spherical bubbles are supported), predict, correct predictions, retrain.
 * `bubble_seg.py`: the pipeline functions (preprocessing, Cellpose-SAM, circle fitting, Hough completion, QC, batch driver).
 
 Input: the clean native 400×250 frames (3.2 µm/px, no timestamp/scale bar) exported by
