@@ -1,7 +1,9 @@
 """
 napari annotation tool for overlapping bubbles.
 
-    python annotate_bubbles.py annotations/<frame>.json
+    python annotate_bubbles.py                      # list frames in ./annotations, open the first unannotated one
+    python annotate_bubbles.py annotations          # same, for a given folder
+    python annotate_bubbles.py annotations/r563_svd_normalised_tr050_tid0_000.json   # a specific frame
 
 Layers
 ------
@@ -50,11 +52,41 @@ def layer_to_rois(layer):
     return out
 
 
+def resolve_target(arg):
+    """Accept a JSON file or a folder; for a folder, list its annotation files and pick the first
+    one without bubbles (or ask)."""
+    path = os.path.abspath(arg)
+    if os.path.isfile(path):
+        return path
+    if not os.path.isdir(path):
+        here = os.path.dirname(os.path.abspath(__file__))
+        alt = os.path.join(here, arg)
+        if os.path.exists(alt):
+            return resolve_target(alt)
+        sys.exit(f"not found: {path}\n(run section 2 of bubble_training.ipynb first, or check the path / current folder)")
+    files = sorted(f for f in os.listdir(path) if f.endswith(".json"))
+    if not files:
+        sys.exit(f"no .json files in {path} (run section 2 of bubble_training.ipynb to stage frames)")
+    counts = []
+    for f in files:
+        with open(os.path.join(path, f)) as fh:
+            counts.append(len(json.load(fh).get("bubbles", [])))
+    print("annotation files:")
+    for i, (f, n) in enumerate(zip(files, counts)):
+        print(f"  [{i}] {f}  ({n} bubbles)")
+    default = next((i for i, n in enumerate(counts) if n == 0), 0)
+    ans = input(f"open which? [enter = {default}] ").strip() if sys.stdin.isatty() else ""
+    return os.path.join(path, files[int(ans) if ans else default])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("json", help="annotation JSON (created by the training notebook)")
+    ap.add_argument("json", nargs="?", default="annotations",
+                    help="annotation JSON, or a folder of them (default: ./annotations)")
     ap.add_argument("--no-rim", action="store_true", help="do not compute the rim-map helper layer")
     args = ap.parse_args()
+    args.json = resolve_target(args.json)
+    print("opening", args.json)
 
     import napari
     from qtpy.QtCore import QTimer
