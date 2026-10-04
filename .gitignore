@@ -4,3 +4,6 @@ __pycache__/
 models/
 animations/
 *.npy
+annotations/*.tif
+annotations/excluded/*.tif
+results/*/shapes/*.tif

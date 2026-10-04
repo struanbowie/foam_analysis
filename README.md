@@ -7,6 +7,9 @@ Bubble segmentation for high-speed foam image series.
 * `bubble_training.ipynb` + `bubble_rcnn.py` + `annotate_bubbles.py`: **trainable** pipeline. Hand-annotate bubbles
   in napari (one ellipse/polygon per bubble, overlaps allowed), train a Mask R-CNN (per-instance masks, so overlapping,
   nested and non-spherical bubbles are supported), predict, correct predictions, retrain.
+* `bubble_inference.ipynb` + `bubble_io.py`: apply the finalised model to selected frames / ranges / whole trains,
+  review the drafts in napari (tick **Reviewed**), export `results/<run>/bubbles.csv` and `frames.csv`.
+* `bubble_analysis.ipynb`: loads an exported run (per-train overview, outlines, pixel masks); analyses get added here.
 * `bubble_seg.py`: the pipeline functions (preprocessing, Cellpose-SAM, circle fitting, Hough completion, QC, batch driver).
 
 Input: the clean native 400×250 frames (3.2 µm/px, no timestamp/scale bar) exported by

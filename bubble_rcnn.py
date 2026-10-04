@@ -579,50 +579,48 @@ def outline_fit(mask: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
     return fit
 
 
-def measure_instances(pred: dict, cfg: RCNNConfig, frame: str = "") -> pd.DataFrame:
-    """Per bubble: centre, area, equivalent radius, ellipse axes (native px and um).
+def _orientation_from_row_axis(theta_major):
+    """Angle (deg, [-90, 90)) between the row axis and a major axis at angle theta (rad, from x)."""
+    o = np.degrees(np.arctan2(np.cos(theta_major), np.sin(theta_major)))
+    return (o + 90) % 180 - 90
 
-    Interior bubbles: measured from the mask (centroid, area, regionprops ellipse).
-    Bubbles cut by the image edge (edge_truncated=True): measured from the outline fitted to the
-    visible arc, so x, y, area and axes describe the FULL bubble (centre may be outside the image).
-    area_visible_px2 is always the visible mask area. fit_reliable=False marks edge fits from a short
-    visible arc (< edge_reliable_arc_deg). in_analysis applies the exclusion options
-    (drop_edge_bubbles, drop_unreliable_fits, inner_margin).
-    """
+
+def measure_mask(m: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
+    """Measure one instance mask (model resolution) -> row dict in native px (see measure_instances)."""
     s = cfg.model_scale
-    rows = []
-    for i, (m, sc) in enumerate(zip(pred["masks"], pred["scores"])):
-        rp = measure.regionprops(m.astype(np.uint8))[0]
-        cy, cx = model_to_native(rp.centroid, s)
-        area_vis = rp.area / s ** 2
-        fit = outline_fit(m, cfg)
-        row = dict(frame=frame, bubble_id=i, score=float(sc), x=cx, y=cy, area_px2=area_vis,
-                   r_eq=np.sqrt(area_vis / np.pi), major_axis=rp.axis_major_length / s,
-                   minor_axis=rp.axis_minor_length / s, orientation_deg=np.degrees(rp.orientation),
-                   eccentricity=rp.eccentricity, solidity=rp.solidity, area_visible_px2=area_vis,
-                   edge_truncated=False, fit_kind="mask", arc_deg=360.0, outline_visible_frac=1.0,
-                   fit_reliable=True)
-        if fit is not None and fit["truncated"]:
-            a, b = max(fit["a"], fit["b"]), min(fit["a"], fit["b"])
-            th = fit["theta"] if fit["a"] >= fit["b"] else fit["theta"] + np.pi / 2
-            orient = np.degrees(np.arctan2(np.cos(th), np.sin(th)))          # angle from the row axis
-            orient = (orient + 90) % 180 - 90
-            if fit["kind"] == "circle":
-                orient = np.nan
-            row.update(x=fit["x"], y=fit["y"], area_px2=np.pi * a * b, r_eq=np.sqrt(a * b),
-                       major_axis=2 * a, minor_axis=2 * b, orientation_deg=orient,
-                       eccentricity=np.sqrt(1 - (b / a) ** 2), edge_truncated=True, fit_kind=fit["kind"],
-                       arc_deg=fit["arc_deg"], outline_visible_frac=fit["visible_frac"],
-                       fit_reliable=fit["arc_deg"] >= cfg.edge_reliable_arc_deg)
-        rows.append(row)
-    df = pd.DataFrame(rows)
+    if not m.any():
+        return None
+    rp = measure.regionprops(m.astype(np.uint8))[0]
+    cy, cx = model_to_native(rp.centroid, s)
+    area_vis = rp.area / s ** 2
+    fit = outline_fit(m, cfg)
+    row = dict(x=cx, y=cy, area_px2=area_vis,
+               r_eq=np.sqrt(area_vis / np.pi), major_axis=rp.axis_major_length / s,
+               minor_axis=rp.axis_minor_length / s, orientation_deg=np.degrees(rp.orientation),
+               eccentricity=rp.eccentricity, solidity=rp.solidity, area_visible_px2=area_vis,
+               edge_truncated=False, fit_kind="mask", arc_deg=360.0, outline_visible_frac=1.0,
+               fit_reliable=True)
+    if fit is not None and fit["truncated"]:
+        a, b = max(fit["a"], fit["b"]), min(fit["a"], fit["b"])
+        th = fit["theta"] if fit["a"] >= fit["b"] else fit["theta"] + np.pi / 2
+        orient = np.nan if fit["kind"] == "circle" else _orientation_from_row_axis(th)
+        row.update(x=fit["x"], y=fit["y"], area_px2=np.pi * a * b, r_eq=np.sqrt(a * b),
+                   major_axis=2 * a, minor_axis=2 * b, orientation_deg=orient,
+                   eccentricity=np.sqrt(1 - (b / a) ** 2), edge_truncated=True, fit_kind=fit["kind"],
+                   arc_deg=fit["arc_deg"], outline_visible_frac=fit["visible_frac"],
+                   fit_reliable=fit["arc_deg"] >= cfg.edge_reliable_arc_deg)
+    return row
+
+
+def finish_measurements(df: pd.DataFrame, native_hw, cfg: RCNNConfig) -> pd.DataFrame:
+    """Add in_analysis (exclusion options) and micrometre columns."""
     if len(df):
-        Hn, Wn = pred["masks"].shape[1] / s, pred["masks"].shape[2] / s
+        Hn, Wn = native_hw
         keep = np.ones(len(df), bool)
         if cfg.drop_edge_bubbles:
-            keep &= ~df["edge_truncated"].to_numpy()
+            keep &= ~df["edge_truncated"].to_numpy(bool)
         if cfg.drop_unreliable_fits:
-            keep &= df["fit_reliable"].to_numpy()
+            keep &= df["fit_reliable"].to_numpy(bool)
         if cfg.inner_margin > 0:
             mgn = cfg.inner_margin
             keep &= ((df["x"] >= mgn - 0.5) & (df["x"] <= Wn - 0.5 - mgn)
@@ -636,6 +634,27 @@ def measure_instances(pred: dict, cfg: RCNNConfig, frame: str = "") -> pd.DataFr
         df["major_axis_um"] = df["major_axis"] * u
         df["minor_axis_um"] = df["minor_axis"] * u
     return df
+
+
+def measure_instances(pred: dict, cfg: RCNNConfig, frame: str = "") -> pd.DataFrame:
+    """Per bubble: centre, area, equivalent radius, ellipse axes (native px and um).
+
+    Interior bubbles: measured from the mask (centroid, area, regionprops ellipse).
+    Bubbles cut by the image edge (edge_truncated=True): measured from the outline fitted to the
+    visible arc, so x, y, area and axes describe the FULL bubble (centre may be outside the image).
+    area_visible_px2 is always the visible mask area. fit_reliable=False marks edge fits from a short
+    visible arc (< edge_reliable_arc_deg). in_analysis applies the exclusion options
+    (drop_edge_bubbles, drop_unreliable_fits, inner_margin).
+    """
+    s = cfg.model_scale
+    rows = []
+    for i, (m, sc) in enumerate(zip(pred["masks"], pred["scores"])):
+        row = measure_mask(m, cfg)
+        if row is not None:
+            rows.append(dict(frame=frame, bubble_id=i, score=float(sc), **row))
+    df = pd.DataFrame(rows)
+    native_hw = (pred["masks"].shape[1] / s, pred["masks"].shape[2] / s) if len(pred["masks"]) else (0, 0)
+    return finish_measurements(df, native_hw, cfg)
 
 
 def predict_frame(model, path: str, cfg: RCNNConfig):

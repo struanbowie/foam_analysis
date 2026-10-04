@@ -17,6 +17,9 @@ Layers
                    No rectangle at all = the whole frame counts as fully annotated.
 
 Saving: "Save" button (right dock) or Shift-S. Also autosaves every 2 minutes.
+Reviewed: tick the checkbox when a frame is fully checked (used by bubble_inference.ipynb to
+decide which frames are final). Works for result folders too:
+    python annotate_bubbles.py results/<run_name>/shapes
 Run on Maxwell inside a FastX desktop session (max-display), or locally after copying the
 annotations folder (then copy the .json files back).
 """
@@ -74,6 +77,15 @@ def layer_to_rois(layer):
     return out
 
 
+def build_payload(ann, bubbles, rois_list, reviewed):
+    """JSON to save: keeps every extra field of the original file (model, frame_path, ...)."""
+    data = {k: v for k, v in ann.items() if k not in ("bubbles", "rois")}
+    data.update(bubbles=bubbles, rois=rois_list)
+    if reviewed is not None:
+        data["reviewed"] = bool(reviewed)
+    return data
+
+
 def resolve_target(arg):
     """Accept a JSON file or a folder; for a folder, list its annotation files and pick the first
     one without bubbles (or ask)."""
@@ -89,14 +101,20 @@ def resolve_target(arg):
     files = sorted(f for f in os.listdir(path) if f.endswith(".json"))
     if not files:
         sys.exit(f"no .json files in {path} (run section 2 of bubble_training.ipynb to stage frames)")
-    counts = []
+    counts, reviewed = [], []
     for f in files:
         with open(os.path.join(path, f)) as fh:
-            counts.append(len(json.load(fh).get("bubbles", [])))
+            a = json.load(fh)
+        counts.append(len(a.get("bubbles", [])))
+        reviewed.append(a.get("reviewed"))
+    has_review = any(r is not None for r in reviewed)
     print("annotation files:")
-    for i, (f, n) in enumerate(zip(files, counts)):
-        print(f"  [{i}] {f}  ({n} bubbles)")
-    default = next((i for i, n in enumerate(counts) if n == 0), 0)
+    for i, (f, n, r) in enumerate(zip(files, counts, reviewed)):
+        print(f"  [{i}] {f}  ({n} bubbles{', reviewed' if r else ''})")
+    if has_review:   # result folder: open the first frame not yet reviewed
+        default = next((i for i, r in enumerate(reviewed) if not r), 0)
+    else:            # training folder: open the first frame without bubbles
+        default = next((i for i, n in enumerate(counts) if n == 0), 0)
     ans = input(f"open which? [enter = {default}] ").strip() if sys.stdin.isatty() else ""
     return os.path.join(path, files[int(ans) if ans else default])
 
@@ -112,7 +130,7 @@ def main():
 
     import napari
     from qtpy.QtCore import QTimer
-    from qtpy.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+    from qtpy.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
     import bubble_seg as bs
 
@@ -144,6 +162,8 @@ def main():
     viewer.layers.selection.active = bubbles
 
     status = QLabel("")
+    chk = QCheckBox("Reviewed (frame fully checked)")
+    chk.setChecked(bool(ann.get("reviewed", False)))
 
     def save(*_):
         moved = move_rectangles_to_rois(bubbles, rois)
@@ -151,12 +171,14 @@ def main():
         if moved < 0:   # could not move them in the viewer: include them directly
             roi_list += [[float(r[:, 0].min()), float(r[:, 1].min()), float(r[:, 0].max()), float(r[:, 1].max())]
                          for r in rectangles_in(bubbles)[1]]
-        data = dict(image=ann["image"], bubbles=layer_to_bubbles(bubbles), rois=roi_list)
+        # "reviewed" is only written for result files (or once ticked), so training files stay unchanged
+        rv = chk.isChecked() if ("reviewed" in ann or chk.isChecked()) else None
+        data = build_payload(ann, layer_to_bubbles(bubbles), roi_list, rv)
         tmp = args.json + ".tmp"
         with open(tmp, "w") as f:
             json.dump(data, f)
         os.replace(tmp, args.json)
-        msg = f"saved {len(data['bubbles'])} bubbles, {len(data['rois'])} ROIs"
+        msg = f"saved {len(data['bubbles'])} bubbles, {len(data['rois'])} ROIs" + (", reviewed" if data.get("reviewed") else "")
         status.setText(msg)
         print(msg, "->", args.json)
 
@@ -166,6 +188,8 @@ def main():
     btn = QPushButton("Save annotations (Shift-S)")
     btn.clicked.connect(save)
     lay.addWidget(btn)
+    chk.stateChanged.connect(save)
+    lay.addWidget(chk)
     lay.addWidget(QLabel("bubbles layer: E = ellipse, P = polygon\n"
                          "select (S) a shape to move / rotate / resize it\n"
                          "fully annotated layer: R = rectangle\n"
