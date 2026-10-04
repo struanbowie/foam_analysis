@@ -85,6 +85,17 @@ class RCNNConfig:
     mask_nms_iou: float = 0.7               # duplicate removal on masks (overlapping bubbles are ~<0.6)
     um_per_px: float = 3.2
 
+    # --- bubbles cut by the image edge ---
+    edge_min_arc_deg: float = 100.0         # visible arc needed to even try an ellipse; shorter arcs -> circle
+    edge_ellipse_gain: float = 1.6          # use the ellipse only if its RMS residual is this many times smaller
+                                            # than the circle's (otherwise the circle is more reliable)
+    edge_max_axis_ratio: float = 2.5        # reject edge-ellipse fits more elongated than this (-> circle)
+    edge_reliable_arc_deg: float = 140.0    # edge fits from a shorter visible arc are flagged fit_reliable=False
+    drop_unreliable_fits: bool = False      # exclude edge bubbles with fit_reliable=False from the analysis
+    drop_edge_bubbles: bool = False         # internal boundary option 1: exclude every bubble touching the edge
+    inner_margin: float = 0.0               # internal boundary option 2 (native px): exclude bubbles whose
+                                            # (fitted) centre lies closer than this to the edge (or outside)
+
     # --- preprocessing passed to bubble_seg (lengths in native px) ---
     prep: dict = field(default_factory=lambda: dict(
         bg_sigma=24.0, denoise="gaussian", denoise_sigma=1.0, use_clahe=True,
@@ -496,23 +507,132 @@ def predict(model, x: np.ndarray, cfg: RCNNConfig, score_thresh=None):
     return dict(masks=masks, scores=scores)
 
 
+def _fit_circle(xy):
+    """Geometric least-squares circle fit (algebraic start). Returns xc, yc, r."""
+    from scipy.optimize import least_squares
+    x, y = xy[:, 0], xy[:, 1]
+    A = np.c_[x, y, np.ones_like(x)]
+    (a, b, c), *_ = np.linalg.lstsq(A, x ** 2 + y ** 2, rcond=None)
+    x0 = np.array([a / 2, b / 2, np.sqrt(max(c + a * a / 4 + b * b / 4, 1e-9))])
+    res = least_squares(lambda p: np.hypot(x - p[0], y - p[1]) - p[2], x0)
+    return float(res.x[0]), float(res.x[1]), float(abs(res.x[2]))
+
+
+def _ellipse_params(em):
+    if hasattr(em, "axis_lengths"):
+        (xc, yc), (a, b), th = em.center, em.axis_lengths, em.theta
+    else:
+        xc, yc, a, b, th = em.params
+    return float(xc), float(yc), float(a), float(b), float(th)
+
+
+def _ellipse_points(xc, yc, a, b, th, n=360):
+    t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    ct, st = np.cos(th), np.sin(th)
+    x = xc + a * np.cos(t) * ct - b * np.sin(t) * st
+    y = yc + a * np.cos(t) * st + b * np.sin(t) * ct
+    return x, y
+
+
+def outline_fit(mask: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
+    """Fit an ellipse/circle to one predicted mask, in NATIVE coordinates.
+
+    Masks of bubbles cut by the image edge have a straight side along the border. Those border
+    points are dropped, and only the visible arc is fitted, so the centre may lie OUTSIDE the
+    image. A circle is used unless the arc is long enough (edge_min_arc_deg) AND an ellipse fits it
+    clearly better (edge_ellipse_gain): on short noisy arcs ellipse fits are unstable.
+    Returns dict(x, y, a, b, theta, kind, truncated, arc_deg, visible_frac) or None.
+    """
+    s = cfg.model_scale
+    H, W = mask.shape
+    cs = measure.find_contours(np.pad(mask, 1).astype(np.float32), 0.5)
+    if not cs:
+        return None
+    c = max(cs, key=len) - 1                      # model (row, col); border runs at -0.5 / H-0.5
+    on_edge = (c[:, 0] <= 0) | (c[:, 0] >= H - 1) | (c[:, 1] <= 0) | (c[:, 1] >= W - 1)
+    truncated = on_edge.sum() >= 3
+    arc = c[~on_edge] if truncated else c
+    if len(arc) < 6:
+        return None
+    xy = model_to_native(arc, s)[:, ::-1]         # native (x, y)
+    xc, yc, r = _fit_circle(xy)
+    ang = np.arctan2(xy[:, 1] - yc, xy[:, 0] - xc)
+    arc_deg = 10.0 * len(np.unique(np.floor((ang + np.pi) / np.deg2rad(10)).astype(int)))
+    fit = dict(x=xc, y=yc, a=r, b=r, theta=0.0, kind="circle")
+    if not truncated or arc_deg >= cfg.edge_min_arc_deg:
+        em = _fit_ellipse(xy)
+        if em is not None:
+            ex, ey, a, b, th = _ellipse_params(em)
+            ok = np.isfinite([ex, ey, a, b]).all() and min(a, b) > 0
+            if ok and truncated:   # partial arc: sanity checks + ellipse must clearly beat the circle
+                rms_c = np.sqrt(np.mean((np.hypot(xy[:, 0] - xc, xy[:, 1] - yc) - r) ** 2))
+                rms_e = np.sqrt(np.mean(np.asarray(em.residuals(xy)) ** 2))
+                ok = (max(a, b) / min(a, b) <= cfg.edge_max_axis_ratio and max(a, b) < 3 * r
+                      and np.hypot(ex - xc, ey - yc) < r and rms_c > cfg.edge_ellipse_gain * max(rms_e, 1e-6))
+            if ok:
+                fit = dict(x=ex, y=ey, a=a, b=b, theta=th, kind="ellipse")
+    # fraction of the fitted outline inside the image
+    Hn, Wn = H / s, W / s
+    px, py = _ellipse_points(fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"])
+    vis = (px >= -0.5) & (px <= Wn - 0.5) & (py >= -0.5) & (py <= Hn - 0.5)
+    fit.update(truncated=bool(truncated), arc_deg=float(min(arc_deg, 360.0)), visible_frac=float(vis.mean()))
+    return fit
+
+
 def measure_instances(pred: dict, cfg: RCNNConfig, frame: str = "") -> pd.DataFrame:
-    """Per bubble: centroid, area, equivalent radius, fitted-ellipse axes (native px and um)."""
+    """Per bubble: centre, area, equivalent radius, ellipse axes (native px and um).
+
+    Interior bubbles: measured from the mask (centroid, area, regionprops ellipse).
+    Bubbles cut by the image edge (edge_truncated=True): measured from the outline fitted to the
+    visible arc, so x, y, area and axes describe the FULL bubble (centre may be outside the image).
+    area_visible_px2 is always the visible mask area. fit_reliable=False marks edge fits from a short
+    visible arc (< edge_reliable_arc_deg). in_analysis applies the exclusion options
+    (drop_edge_bubbles, drop_unreliable_fits, inner_margin).
+    """
     s = cfg.model_scale
     rows = []
     for i, (m, sc) in enumerate(zip(pred["masks"], pred["scores"])):
         rp = measure.regionprops(m.astype(np.uint8))[0]
         cy, cx = model_to_native(rp.centroid, s)
-        area = rp.area / s ** 2
-        rows.append(dict(frame=frame, bubble_id=i, score=float(sc), x=cx, y=cy, area_px2=area,
-                         r_eq=np.sqrt(area / np.pi), major_axis=rp.axis_major_length / s,
-                         minor_axis=rp.axis_minor_length / s, orientation_deg=np.degrees(rp.orientation),
-                         eccentricity=rp.eccentricity, solidity=rp.solidity))
+        area_vis = rp.area / s ** 2
+        fit = outline_fit(m, cfg)
+        row = dict(frame=frame, bubble_id=i, score=float(sc), x=cx, y=cy, area_px2=area_vis,
+                   r_eq=np.sqrt(area_vis / np.pi), major_axis=rp.axis_major_length / s,
+                   minor_axis=rp.axis_minor_length / s, orientation_deg=np.degrees(rp.orientation),
+                   eccentricity=rp.eccentricity, solidity=rp.solidity, area_visible_px2=area_vis,
+                   edge_truncated=False, fit_kind="mask", arc_deg=360.0, outline_visible_frac=1.0,
+                   fit_reliable=True)
+        if fit is not None and fit["truncated"]:
+            a, b = max(fit["a"], fit["b"]), min(fit["a"], fit["b"])
+            th = fit["theta"] if fit["a"] >= fit["b"] else fit["theta"] + np.pi / 2
+            orient = np.degrees(np.arctan2(np.cos(th), np.sin(th)))          # angle from the row axis
+            orient = (orient + 90) % 180 - 90
+            if fit["kind"] == "circle":
+                orient = np.nan
+            row.update(x=fit["x"], y=fit["y"], area_px2=np.pi * a * b, r_eq=np.sqrt(a * b),
+                       major_axis=2 * a, minor_axis=2 * b, orientation_deg=orient,
+                       eccentricity=np.sqrt(1 - (b / a) ** 2), edge_truncated=True, fit_kind=fit["kind"],
+                       arc_deg=fit["arc_deg"], outline_visible_frac=fit["visible_frac"],
+                       fit_reliable=fit["arc_deg"] >= cfg.edge_reliable_arc_deg)
+        rows.append(row)
     df = pd.DataFrame(rows)
+    if len(df):
+        Hn, Wn = pred["masks"].shape[1] / s, pred["masks"].shape[2] / s
+        keep = np.ones(len(df), bool)
+        if cfg.drop_edge_bubbles:
+            keep &= ~df["edge_truncated"].to_numpy()
+        if cfg.drop_unreliable_fits:
+            keep &= df["fit_reliable"].to_numpy()
+        if cfg.inner_margin > 0:
+            mgn = cfg.inner_margin
+            keep &= ((df["x"] >= mgn - 0.5) & (df["x"] <= Wn - 0.5 - mgn)
+                     & (df["y"] >= mgn - 0.5) & (df["y"] <= Hn - 0.5 - mgn)).to_numpy()
+        df["in_analysis"] = keep
     if len(df) and cfg.um_per_px:
         u = cfg.um_per_px
         df["r_eq_um"] = df["r_eq"] * u
         df["area_um2"] = df["area_px2"] * u ** 2
+        df["area_visible_um2"] = df["area_visible_px2"] * u ** 2
         df["major_axis_um"] = df["major_axis"] * u
         df["minor_axis_um"] = df["minor_axis"] * u
     return df
@@ -596,12 +716,9 @@ def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="polygon", tol=0.4, min_sc
         c = max(cs, key=len) - 1
         c = model_to_native(c, s)
         if kind == "ellipse":
-            em = _fit_ellipse(c[:, ::-1])
-            if em is not None:
-                if hasattr(em, "axis_lengths"):
-                    (xc, yc), (a, b), th = em.center, em.axis_lengths, em.theta
-                else:
-                    xc, yc, a, b, th = em.params
+            fit = outline_fit(m, cfg)    # edge-aware: centre may lie outside the image
+            if fit is not None:
+                xc, yc, a, b, th = fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"]
                 ca, sa = np.cos(th), np.sin(th)
                 ux, uy = np.array([ca, sa]) * a, np.array([-sa, ca]) * b
                 corners_xy = [(xc - ux[0] - uy[0], yc - ux[1] - uy[1]), (xc + ux[0] - uy[0], yc + ux[1] - uy[1]),
@@ -622,8 +739,12 @@ def write_prediction_annotation(json_path: str, image_name: str, shapes: list):
 # ----------------------------------------------------------------------------
 # Plotting
 # ----------------------------------------------------------------------------
-def plot_instances(img, pred_or_masks, cfg: RCNNConfig, ax=None, title=None, roi=None, color=None):
-    """Overlay instance outlines (model-resolution masks) on the native image."""
+def plot_instances(img, pred_or_masks, cfg: RCNNConfig, ax=None, title=None, roi=None, color=None,
+                   df: Optional[pd.DataFrame] = None, show_fit=True, view_pad=0):
+    """Overlay instance outlines (model-resolution masks) on the native image.
+    show_fit: dashed fitted outline for bubbles cut by the image edge (may extend outside).
+    df: result of measure_instances; bubbles with in_analysis=False are drawn grey.
+    view_pad: extend the view this many native px beyond the image to see fitted outlines outside it."""
     import matplotlib.pyplot as plt
     masks = pred_or_masks["masks"] if isinstance(pred_or_masks, dict) else pred_or_masks
     if ax is None:
@@ -631,14 +752,30 @@ def plot_instances(img, pred_or_masks, cfg: RCNNConfig, ax=None, title=None, roi
     ax.imshow(img, cmap="gray")
     cmap = plt.get_cmap("tab20")
     s = cfg.model_scale
+    excluded = set(df.loc[~df["in_analysis"], "bubble_id"]) if df is not None and "in_analysis" in df else set()
     for i, m in enumerate(masks):
+        col = "0.6" if i in excluded else (color or cmap(i % 20))
         for c in measure.find_contours(np.pad(m, 1).astype(np.float32), 0.5):
             c = model_to_native(c - 1, s)
-            ax.plot(c[:, 1], c[:, 0], lw=0.9, color=color or cmap(i % 20))
+            ax.plot(c[:, 1], c[:, 0], lw=0.9, color=col)
+        if show_fit:
+            fit = outline_fit(m, cfg)
+            if fit is not None and fit["truncated"]:
+                px, py = _ellipse_points(fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"])
+                ax.plot(np.r_[px, px[:1]], np.r_[py, py[:1]], ls="--", lw=0.8, color=col)
+    if cfg.inner_margin > 0:
+        mg = cfg.inner_margin
+        ax.add_patch(plt.Rectangle((mg - 0.5, mg - 0.5), img.shape[1] - 2 * mg, img.shape[0] - 2 * mg,
+                                   fill=False, color="yellow", lw=1, ls=":"))
     if roi is not None:
         ax.set_xlim(roi[0], roi[1])
         ax.set_ylim(roi[3], roi[2])
-    ax.set_title(title or f"{len(masks)} bubbles")
+    else:
+        ax.set_xlim(-0.5 - view_pad, img.shape[1] - 0.5 + view_pad)
+        ax.set_ylim(img.shape[0] - 0.5 + view_pad, -0.5 - view_pad)
+        if view_pad:
+            ax.add_patch(plt.Rectangle((-0.5, -0.5), img.shape[1], img.shape[0], fill=False, color="w", lw=0.8))
+    ax.set_title(title or f"{len(masks)} bubbles" + ("  (dashed: fitted outline of edge bubbles)" if show_fit else ""))
     ax.axis("off")
     return ax
 
