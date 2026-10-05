@@ -20,6 +20,8 @@ Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (F
   are fitted from their visible arc), annotation I/O.
 * `bubble_io.py`: frame selection (frames / ranges / whole trains), results folders, measuring reviewed shapes,
   export and loading of results.
+* `bubble_stats.py`: per-frame metrics (count, density, mean/median/Sauter radius, coverage, volume proxy, shape,
+  centroid) and the analysis plots.
 * `bubble_seg.py`: image preprocessing (background flattening, denoising, CLAHE, rim map), the model's input channels.
 * `annotate_bubbles.py`: napari tool (one ellipse/polygon per bubble, overlaps allowed; "fully annotated" rectangles
   for training; **Reviewed** checkbox for results).
