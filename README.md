@@ -1,42 +1,56 @@
 # foam_analysis
 
-Bubble segmentation for high-speed foam image series.
+Bubble segmentation and analysis for high-speed (HPV-X2) foam image series: hand-annotate bubbles, train a
+Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review its predictions, analyse the results.
 
-* `bubble_segmentation.ipynb`: step-by-step pipeline on one frame, with every tunable parameter in a single CONFIG cell.
-* `preprocessing/normalise_runs_TKM_fast_2.ipynb`: raw run → SVD-normalised frames + GIF (no annotations, native resolution).
-* `bubble_training.ipynb` + `bubble_rcnn.py` + `annotate_bubbles.py`: **trainable** pipeline. Hand-annotate bubbles
-  in napari (one ellipse/polygon per bubble, overlaps allowed), train a Mask R-CNN (per-instance masks, so overlapping,
-  nested and non-spherical bubbles are supported), predict, correct predictions, retrain.
-* `bubble_inference.ipynb` + `bubble_io.py`: apply the finalised model to selected frames / ranges / whole trains,
-  review the drafts in napari (tick **Reviewed**), export `results/<run>/bubbles.csv` and `frames.csv`.
-* `bubble_analysis.ipynb`: loads an exported run (per-train overview, outlines, pixel masks); analyses get added here.
-* `bubble_seg.py`: the pipeline functions (preprocessing, Cellpose-SAM, circle fitting, Hough completion, QC, batch driver).
+## Pipeline
 
-Input: the clean native 400×250 frames (3.2 µm/px, no timestamp/scale bar) exported by
-`preprocessing/normalise_runs_TKM_fast_2.ipynb` (SVD flat-field normalisation of the raw HPV-X2 runs).
+| step | notebook | output |
+|---|---|---|
+| 1. Normalise a run | `preprocessing/normalise_runs_TKM_fast_2.ipynb` | `raw/jpg_<run>/` clean 400×250 frames (analysis), `raw/jpg_<run>_annotated/` with scale bar + time stamp (figures), optional `raw/<run>.npy` |
+| 2. Train the model | `bubble_training.ipynb` | `annotations/` (your napari annotations), `models/` (trained models) |
+| 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed outlines), `bubbles.csv`, `frames.csv` |
+| 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
 
-Pipeline: optional exclusion regions → masked background flattening, denoising, CLAHE and a
-noise-normalised rim (dark-ridge) map → static-structure mask (fibres) → Cellpose-SAM (multi-diameter passes) →
-robust circle fit per mask refined on the rim map (recovers partly hidden bubbles) → optional ridge-Hough completion
-for large bubbles → quality scores + duplicate suppression → CSV of x, y, r (px and µm) per bubble.
+Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
+
+## Code
+
+* `bubble_rcnn.py`: Mask R-CNN model, training, prediction, edge-aware measurement (bubbles cut by the image edge
+  are fitted from their visible arc), annotation I/O.
+* `bubble_io.py`: frame selection (frames / ranges / whole trains), results folders, measuring reviewed shapes,
+  export and loading of results.
+* `bubble_seg.py`: image preprocessing (background flattening, denoising, CLAHE, rim map), the model's input channels.
+* `annotate_bubbles.py`: napari tool (one ellipse/polygon per bubble, overlaps allowed; "fully annotated" rectangles
+  for training; **Reviewed** checkbox for results).
+* `preprocessing/svd_on_datasets.py`: SVD flat-field model used by the normalisation notebook.
+
+## Folders
+
+| folder | in git? | content |
+|---|---|---|
+| `annotations/` | `.json` yes, `.tif` no | training annotations (+ frame copies) |
+| `results/` | `.json`/`.csv` yes, `.tif` no | reviewed predictions and measurements per inference run |
+| `raw/` | no | normalised frames from step 1 |
+| `models/` | no | trained models (~180 MB each) |
 
 ## Setup (DESY Maxwell)
 
-```bash
-module load maxwell python/3.11
-python -m venv ~/venvs/foam && source ~/venvs/foam/bin/activate
-pip install -r requirements.txt
-python -m ipykernel install --user --name foam --display-name "foam (cellpose)"
-# download the Cellpose-SAM weights once (~1.2 GB) on a node with internet, e.g. a login node.
-# gpu=False only because login nodes have no GPU; it is just a download. The notebook itself
-# runs on the GPU (cp_gpu=True in CONFIG).
-python -c "from cellpose import models; models.CellposeModel(gpu=False)"
-```
-On a GPU node (e.g. A100), check that PyTorch sees the card before running the notebook:
-```bash
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"   # expect: True NVIDIA A100...
-```
-If this prints `False`, the installed torch wheel does not match the node's CUDA driver: reinstall torch with the
-CUDA build from https://pytorch.org/get-started/locally/ (e.g. `--index-url https://download.pytorch.org/whl/cu124`).
+The bubble notebooks use the `foam` environment (conda env on GPFS, see below). The normalisation notebook needs
+`extra_data` (European XFEL); run it with the kernel that provides it (e.g. the default Python 3 kernel on max-jhub).
 
-Open the notebook from the repository root (paths are relative to it) on a GPU JupyterHub session with the `foam (cellpose)` kernel.
+```bash
+SB=/gpfs/exfel/u/usr/SPB/202501/p007699/Shared/sbowie
+ENV=$SB/venvs/foam
+export PIP_CACHE_DIR=$SB/.cache/pip TORCH_HOME=$SB/.cache/torch
+mamba create -y -p $ENV python=3.11 pip && mamba activate $ENV
+pip install -r requirements.txt
+pip install "napari[all]"                        # where you annotate (FastX)
+python -m ipykernel install --user --name foam --display-name "foam (bubbles)" --env TORCH_HOME $TORCH_HOME
+# COCO-pretrained Mask R-CNN weights, once (needs internet, e.g. a login node):
+python -c "from torchvision.models.detection import maskrcnn_resnet50_fpn_v2 as m; m(weights='DEFAULT')"
+```
+Check the GPU on a GPU node: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`.
+
+Run the notebooks from the repository root (paths are relative to it) on a GPU JupyterHub session with the
+`foam (bubbles)` kernel.
