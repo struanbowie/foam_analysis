@@ -2,7 +2,7 @@ outputs/
 __pycache__/
 .ipynb_checkpoints/
 models/
-animations/
+raw/
 *.npy
 annotations/*.tif
 annotations/excluded/*.tif

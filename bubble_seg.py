@@ -40,10 +40,10 @@ from skimage import color, draw, exposure, feature, filters, io, measure, morpho
 @dataclass
 class Config:
     # --- I/O -----------------------------------------------------------------
-    image_path: str = "animations/jpg_r563_svd_normalised_tr050/r563_svd_normalised_tr050_tid0_000.jpg"
+    image_path: str = "raw/jpg_r563_svd_normalised_tr050/r563_svd_normalised_tr050_tid0_000.jpg"
     output_dir: str = "outputs"
     # glob for the whole series (used for the temporal static mask / batch runs)
-    frame_glob: str = "animations/jpg_r563_svd_normalised_tr050/*.jpg"
+    frame_glob: str = "raw/jpg_r563_svd_normalised_tr050/*.jpg"
 
     # --- pixel size ----------------------------------------------------------
     um_per_px: Optional[float] = 3.2           # HPV-X2 effective pixel size; None -> measure a burned-in scale bar
