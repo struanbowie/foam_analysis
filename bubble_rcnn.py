@@ -386,7 +386,20 @@ def get_device(cfg: RCNNConfig):
     if cfg.device.startswith("cuda") and not torch.cuda.is_available():
         print("CUDA not available -> using CPU (slow)")
         return torch.device("cpu")
-    return torch.device(cfg.device)
+    device = torch.device(cfg.device)
+    if device.type == "cuda":
+        # a PyTorch build only runs on the GPU generations it was compiled for (sm_XY), or newer ones via PTX
+        major, minor = torch.cuda.get_device_capability(device)
+        cap, archs = major * 10 + minor, torch.cuda.get_arch_list()
+        sm = {int(a[3:]) for a in archs if a.startswith("sm_")}
+        ptx = {int(a[8:]) for a in archs if a.startswith("compute_")}
+        if cap not in sm and not any(p <= cap for p in ptx):
+            print(f"This PyTorch build ({torch.__version__}, built for {' '.join(archs)}) has no kernels for "
+                  f"{torch.cuda.get_device_name(device)} (sm_{cap}) -> using CPU (slow).\n"
+                  "Fix: start the JupyterHub session on an A100/H100 node, or install a PyTorch build that "
+                  "supports this GPU (see README).")
+            return torch.device("cpu")
+    return device
 
 
 def save_model(model, cfg: RCNNConfig, name="bubble_rcnn"):

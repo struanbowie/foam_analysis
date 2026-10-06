@@ -53,7 +53,11 @@ python -m ipykernel install --user --name foam --display-name "foam (bubbles)" -
 # COCO-pretrained Mask R-CNN weights, once (needs internet, e.g. a login node):
 python -c "from torchvision.models.detection import maskrcnn_resnet50_fpn_v2 as m; m(weights='DEFAULT')"
 ```
-Check the GPU on a GPU node: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`.
+Check the GPU on a GPU node:
+`python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0), torch.cuda.get_arch_list())"`.
+If the capability (e.g. `(7, 0)` = V100, `(6, 0)` = P100) is missing from the arch list you get
+"CUDA error: no kernel image is available for execution on the device". Either use an A100/H100 node, or install a
+PyTorch build that still supports older GPUs: `pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126`.
 
 Run the notebooks from the repository root (paths are relative to it) on a GPU JupyterHub session with the
 `foam (bubbles)` kernel.
