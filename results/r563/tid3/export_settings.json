@@ -1,0 +1,89 @@
+{
+  "exported": "2026-10-06 15:08:10",
+  "include_unreviewed": true,
+  "config": {
+    "annotation_dir": "annotations",
+    "model_dir": "models",
+    "model_scale": 3.0,
+    "channels": [
+      "norm",
+      "clahe",
+      "ridge"
+    ],
+    "val_fraction": 0.2,
+    "pretrained": true,
+    "anchor_sizes": [
+      [
+        12
+      ],
+      [
+        24
+      ],
+      [
+        48
+      ],
+      [
+        96
+      ],
+      [
+        192
+      ]
+    ],
+    "anchor_ratios": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "trainable_backbone_layers": 5,
+    "box_nms_thresh": 0.7,
+    "detections_per_img": 400,
+    "rpn_post_nms_top_n_test": 2000,
+    "rpn_pre_nms_top_n_test": 4000,
+    "device": "cuda",
+    "crop_size": 384,
+    "batch_size": 4,
+    "iterations": 3000,
+    "lr": 0.01,
+    "momentum": 0.9,
+    "weight_decay": 0.0001,
+    "warmup_iters": 200,
+    "amp": true,
+    "num_workers": 4,
+    "val_every": 250,
+    "seed": 0,
+    "scale_jitter": [
+      0.6,
+      1.6
+    ],
+    "rotate90": true,
+    "flip": true,
+    "intensity_jitter": 0.15,
+    "noise_std": 0.03,
+    "min_instance_area": 12.0,
+    "score_thresh": 0.5,
+    "mask_thresh": 0.5,
+    "mask_nms_iou": 0.7,
+    "um_per_px": 3.2,
+    "edge_min_arc_deg": 100.0,
+    "edge_ellipse_gain": 1.6,
+    "edge_max_axis_ratio": 2.5,
+    "edge_reliable_arc_deg": 140.0,
+    "drop_unreliable_fits": false,
+    "drop_edge_bubbles": false,
+    "inner_margin": 0.0,
+    "prep": {
+      "bg_sigma": 24.0,
+      "denoise": "gaussian",
+      "denoise_sigma": 1.0,
+      "use_clahe": true,
+      "clahe_kernel": 51.2,
+      "clahe_clip": 0.01,
+      "ridge_sigmas": [
+        0.8,
+        1.2,
+        1.6
+      ],
+      "exclude_boxes": []
+    }
+  }
+}
