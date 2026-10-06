@@ -9,3 +9,4 @@ annotations/excluded/*.tif
 results/**/shapes/*.tif
 results/**/candidates/
 results/**/tracked/shapes/
+results/**/figures/*.gif
