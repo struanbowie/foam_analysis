@@ -267,9 +267,26 @@ def _centred(o: Obs, half):
     return out
 
 
+def _ellipse_of(shape):
+    """(xc, yc, a, b, theta) of a napari ellipse shape (a >= b, theta of the a-axis from x)."""
+    d = np.asarray(shape["data"], float)
+    c = d.mean(axis=0)
+    e1, e2 = (d[1] - d[0]) / 2.0, (d[3] - d[0]) / 2.0        # (row, col) half-axis vectors
+    if np.hypot(*e2) > np.hypot(*e1):
+        e1, e2 = e2, e1
+    return c[1], c[0], float(np.hypot(*e1)), float(np.hypot(*e2)), float(np.arctan2(e1[0], e1[1]))
+
+
 def morph_shape(a: Obs, b: Obs, w: float, s: float) -> dict:
-    """Outline (polygon, native coords) between a (w=0) and b (w=1): signed-distance interpolation of the two
-    outlines (aligned at their centroids), placed at the interpolated centroid."""
+    """Outline between a (w=0) and b (w=1). Two circles / ellipses: their centre, axes and angle are interpolated
+    (an ellipse again). Otherwise signed-distance interpolation of the two outlines (aligned at their centroids),
+    placed at the interpolated centroid (a polygon)."""
+    if a.shape["type"] == "ellipse" and b.shape["type"] == "ellipse":
+        pa, pb = _ellipse_of(a.shape), _ellipse_of(b.shape)
+        dth = (pb[4] - pa[4] + np.pi / 2) % np.pi - np.pi / 2          # axis angle is defined modulo pi
+        p = [(1 - w) * x + w * y for x, y in zip(pa[:4], pb[:4])] + [pa[4] + w * dth]
+        kind = "circle" if p[3] >= 0.999 * p[2] else "ellipse"
+        return {**br._ellipse_shape(*p), "fit_kind": kind}
     half = [int(np.ceil(max(o.m.shape[d] for o in (a, b)))) + 3 for d in (0, 1)]
     f = (1 - w) * _sdf(_centred(a, half)) + w * _sdf(_centred(b, half))
     centre = br.native_to_model(np.array([(1 - w) * a.cy + w * b.cy, (1 - w) * a.cx + w * b.cx]), s)
@@ -584,7 +601,8 @@ def _write_tracked(run_dir, lst, metas, tracks, cfg, tcfg, verbose):
     tables, frows = [], []
     for k, (r, a, hw) in enumerate(metas):
         obs = sorted(per_k[k], key=lambda o: o.tid)
-        shapes = [dict(type=o.shape["type"], data=o.shape["data"], track_id=int(o.tid), source=o.source) for o in obs]
+        shapes = [dict(type=o.shape["type"], data=o.shape["data"], track_id=int(o.tid), source=o.source,
+                       **({"fit_kind": o.shape["fit_kind"]} if "fit_kind" in o.shape else {})) for o in obs]
         img_rel = os.path.relpath(os.path.join(os.path.dirname(r.json_path), a["image"]), sd)
         with open(os.path.join(sd, r.frame + ".json"), "w") as f:
             json.dump(dict(image=img_rel, bubbles=shapes, rois=[], reviewed=bool(r.reviewed),

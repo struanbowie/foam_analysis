@@ -180,13 +180,14 @@ def candidates_dir(run_dir: str) -> str:
 
 
 def draft_frames(model, cfg: br.RCNNConfig, frame_paths, run_dir: str, model_path: str = "",
-                 kind: str = "polygon", overwrite_unreviewed: bool = False, show_every: int = 0,
+                 kind: str = "auto", overwrite_unreviewed: bool = False, show_every: int = 0,
                  candidate_thresh: Optional[float] = None):
     """Predict each frame and write <frame>.tif + <frame>.json into run_dir/shapes/.
 
     Existing JSONs are never touched unless overwrite_unreviewed=True AND they are not reviewed.
-    kind: 'polygon' keeps the predicted outline (best for non-spherical bubbles; edge bubbles are
-    still measured edge-aware at export), 'ellipse' gives shapes that are quicker to adjust.
+    kind: 'auto' (default) saves a circle where it follows the predicted outline, else an ellipse, and a polygon
+    only for the rare bubbles neither fits (bubble_rcnn.fit_shape); 'polygon' always keeps the predicted outline,
+    'ellipse' always fits an ellipse.
     candidate_thresh: also save the model's low-score detections (score in [candidate_thresh,
     cfg.score_thresh)) to run_dir/candidates/<frame>.json, used by bubble_track to bridge frames in which a
     bubble was missed. Frames that already have a draft but no candidates are predicted again for the
@@ -228,7 +229,7 @@ def draft_frames(model, cfg: br.RCNNConfig, frame_paths, run_dir: str, model_pat
                                model=os.path.basename(model_path), drafted_at=time.strftime("%Y-%m-%d %H:%M:%S"),
                                frame_path=os.path.abspath(f), score_thresh=cfg.score_thresh), fh)
         if need_cands:
-            cands = br.masks_to_shapes(pred, cfg, kind="polygon", min_score=candidate_thresh,
+            cands = br.masks_to_shapes(pred, cfg, kind=kind, min_score=candidate_thresh,
                                        max_score=cfg.score_thresh, with_score=True)
             with open(cj, "w") as fh:
                 json.dump(dict(image=name + ".tif", bubbles=cands, score_range=[candidate_thresh, cfg.score_thresh],
@@ -297,9 +298,9 @@ def measure_shapes(shapes: list, native_hw, cfg: br.RCNNConfig, frame: str = "")
             row.update(x=x, y=y, area_px2=np.pi * a * b, r_eq=np.sqrt(a * b), major_axis=2 * a,
                        minor_axis=2 * b, orientation_deg=orient if a > b * 1.0001 else np.nan,
                        eccentricity=np.sqrt(max(0.0, 1 - (b / a) ** 2)), solidity=1.0,
-                       edge_truncated=bool(inside.mean() < 1), fit_kind="drawn_ellipse",
+                       edge_truncated=bool(inside.mean() < 1), fit_kind=sh.get("fit_kind", "drawn_ellipse"),
                        arc_deg=360.0 * float(inside.mean()), outline_visible_frac=float(inside.mean()),
-                       fit_reliable=True)
+                       fit_reliable=bool(inside.mean() == 1 or 360.0 * inside.mean() >= cfg.edge_reliable_arc_deg))
         rows.append(dict(frame=frame, bubble_id=i, shape_type=sh["type"], **row))
     return br.finish_measurements(pd.DataFrame(rows), (Hn, Wn), cfg)
 

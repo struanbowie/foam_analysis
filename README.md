@@ -18,7 +18,8 @@ Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (F
 ## Code
 
 * `bubble_rcnn.py`: Mask R-CNN model, training, prediction, edge-aware measurement (bubbles cut by the image edge
-  are fitted from their visible arc), annotation I/O.
+  are fitted from their visible arc), annotation I/O. Predicted outlines are saved as circles, else ellipses, and as
+  polygons only when neither fits (`fit_shape`).
 * `bubble_io.py`: frame selection (frames / ranges / whole trains), results folders, measuring reviewed shapes,
   export and loading of results.
 * `bubble_track.py`: tracking through the frames of one train. Links outlines by overlap (works for deformed

@@ -86,6 +86,12 @@ class RCNNConfig:
     um_per_px: float = 3.2
 
     # --- bubbles cut by the image edge ---
+    # --- shape of the saved outlines (masks_to_shapes kind="auto") ---
+    shape_tol_px: float = 0.4               # a circle / ellipse is used if it follows the predicted outline within
+    shape_tol_rel: float = 0.05             # shape_tol_px + shape_tol_rel * radius (RMS, native px); otherwise polygon
+    circle_min_axis_ratio: float = 0.93     # fitted ellipses rounder than this (minor/major) are saved as circles
+    shape_min_iou: float = 0.8              # ... and the fitted shape (inside the image) must overlap the mask this much
+
     edge_min_fit_arc_deg: float = 45.0      # visible arc needed for any fit; shorter (a sliver at the edge): the full
                                             # size is unknown, the visible part is measured (fit_reliable=False)
     edge_min_arc_deg: float = 100.0         # visible arc needed to even try an ellipse; shorter arcs -> circle
@@ -751,10 +757,91 @@ def _fit_ellipse(xy):
     return em if em.estimate(xy) else None
 
 
-def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="polygon", tol=0.4, min_score=None, max_score=None,
+def _ellipse_shape(xc, yc, a, b, th):
+    """napari ellipse (4 corners of its bounding box, (row, col)) from centre (x, y), semi-axes and angle."""
+    ca, sa = np.cos(th), np.sin(th)
+    ux, uy = np.array([ca, sa]) * a, np.array([-sa, ca]) * b
+    corners_xy = [(xc - ux[0] - uy[0], yc - ux[1] - uy[1]), (xc + ux[0] - uy[0], yc + ux[1] - uy[1]),
+                  (xc + ux[0] + uy[0], yc + ux[1] + uy[1]), (xc - ux[0] + uy[0], yc - ux[1] + uy[1])]
+    return dict(type="ellipse", data=[[float(y), float(x)] for x, y in corners_xy])
+
+
+def _outline_distance(xy, xc, yc, a, b, th):
+    """Distance (native px) of each point to the ellipse / circle outline."""
+    from scipy.spatial import cKDTree
+    n = int(np.clip(8 * (a + b), 90, 2000))
+    px, py = _ellipse_points(xc, yc, a, b, th, n)
+    return cKDTree(np.c_[px, py]).query(xy)[0]
+
+
+def fit_shape(m: np.ndarray, cfg: RCNNConfig, contour=None) -> Optional[dict]:
+    """Simplest shape that follows a predicted mask: circle, else ellipse, else None (keep the polygon).
+
+    The fit is accepted if the RMS distance of the outline to it is <= shape_tol_px + shape_tol_rel * radius
+    (and the 95th percentile <= 2.5x that, so a dent or a merged neighbour forces the polygon). Ellipses rounder
+    than circle_min_axis_ratio become circles. Bubbles cut by the image edge: only the visible arc is compared,
+    the edge-aware fit is used (centre may lie outside the image); slivers keep their polygon.
+    Returns dict(type='ellipse', data=..., fit_kind='circle'|'ellipse') or None."""
+    s = cfg.model_scale
+    H, W = m.shape
+    c = contour if contour is not None else max(measure.find_contours(np.pad(m, 1).astype(np.float32), 0.5), key=len) - 1
+    on_edge = (c[:, 0] <= 0) | (c[:, 0] >= H - 1) | (c[:, 1] <= 0) | (c[:, 1] >= W - 1)
+    truncated = on_edge.sum() >= 3
+    xy = model_to_native(c[~on_edge] if truncated else c, s)[:, ::-1]
+    if len(xy) < 6:
+        return None
+    cands = []
+    if truncated:
+        f = outline_fit(m, cfg)
+        if f is None or f["kind"] == "visible":
+            return None
+        cands.append((f["x"], f["y"], f["a"], f["b"], f["theta"]))
+    else:
+        xc, yc, r = _fit_circle(xy)
+        cands.append((xc, yc, r, r, 0.0))
+        em = _fit_ellipse(xy)
+        if em is not None:
+            ex, ey, a, b, th = _ellipse_params(em)
+            if np.isfinite([ex, ey, a, b]).all() and min(a, b) > 0 and max(a, b) < 3 * r:
+                cands.append((ex, ey, a, b, th))
+    rows, cols = np.flatnonzero(m.any(axis=1)), np.flatnonzero(m.any(axis=0))
+    best = None
+    for p in cands:                                   # the circle first: preferred when both fit
+        d = _outline_distance(xy, *p)
+        r_eq = np.sqrt(p[2] * p[3])
+        tol = cfg.shape_tol_px + cfg.shape_tol_rel * r_eq
+        rms = float(np.sqrt(np.mean(d ** 2)))
+        if not (rms <= tol and np.percentile(d, 95) <= 2.5 * tol and (best is None or rms < best[1])):
+            continue
+        # the fitted shape, cut to the image, must cover the same pixels as the mask
+        px, py = _ellipse_points(*p, n=int(np.clip(8 * (p[2] + p[3]), 90, 2000)))
+        q = native_to_model(np.c_[py, px], s)
+        r0 = int(max(min(q[:, 0].min(), rows[0]) - 1, 0)); r1 = int(min(max(q[:, 0].max(), rows[-1]) + 2, H))
+        c0 = int(max(min(q[:, 1].min(), cols[0]) - 1, 0)); c1 = int(min(max(q[:, 1].max(), cols[-1]) + 2, W))
+        fm = np.zeros((r1 - r0, c1 - c0), bool)
+        rr, cc = draw.polygon(q[:, 0] - r0, q[:, 1] - c0, fm.shape)
+        fm[rr, cc] = True
+        mm = m[r0:r1, c0:c1]
+        inter = np.count_nonzero(fm & mm)
+        if inter / (fm.sum() + mm.sum() - inter + 1e-9) >= cfg.shape_min_iou:
+            best = (p, rms)
+    if best is None:
+        return None
+    xc, yc, a, b, th = best[0]
+    if min(a, b) / max(a, b) >= cfg.circle_min_axis_ratio:
+        a = b = float(np.sqrt(a * b))
+        kind = "circle"
+    else:
+        kind = "ellipse"
+    return {**_ellipse_shape(xc, yc, a, b, th), "fit_kind": kind}
+
+
+def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="auto", tol=0.4, min_score=None, max_score=None,
                     with_score=False) -> list:
     """Convert predicted masks to annotation shapes (native coords) for correction in napari.
-    kind='polygon' keeps the predicted shape; 'ellipse' gives easier-to-edit ellipses.
+    kind='auto' (default): a circle where it follows the predicted outline, else an ellipse, and only for the
+    rare bubbles neither fits a polygon (see fit_shape). 'polygon' always keeps the predicted outline,
+    'ellipse' always fits an ellipse.
     min_score / max_score: keep scores in [min_score, max_score). with_score: add the score to each shape."""
     s = cfg.model_scale
     out = []
@@ -767,19 +854,20 @@ def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="polygon", tol=0.4, min_sc
         c = max(cs, key=len) - 1
         c = model_to_native(c, s)
         sc_kw = dict(score=round(float(sc), 4)) if with_score else {}
+        if kind == "auto":
+            sh = fit_shape(m, cfg, contour=max(cs, key=len) - 1)
+            if sh is not None:
+                out.append({**sh, **sc_kw})
+                continue
         if kind == "ellipse":
             fit = outline_fit(m, cfg)    # edge-aware: centre may lie outside the image
             if fit is not None and fit["kind"] != "visible":
-                xc, yc, a, b, th = fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"]
-                ca, sa = np.cos(th), np.sin(th)
-                ux, uy = np.array([ca, sa]) * a, np.array([-sa, ca]) * b
-                corners_xy = [(xc - ux[0] - uy[0], yc - ux[1] - uy[1]), (xc + ux[0] - uy[0], yc + ux[1] - uy[1]),
-                              (xc + ux[0] + uy[0], yc + ux[1] + uy[1]), (xc - ux[0] + uy[0], yc - ux[1] + uy[1])]
-                out.append(dict(type="ellipse", data=[[y, x] for x, y in corners_xy], **sc_kw))
+                out.append({**_ellipse_shape(fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"]), **sc_kw})
                 continue
         c = measure.approximate_polygon(c, tol)
         if len(c) >= 4:
-            out.append(dict(type="polygon", data=c[:-1].tolist(), **sc_kw))
+            out.append(dict(type="polygon", data=c[:-1].tolist(), **({"fit_kind": "polygon"} if kind == "auto" else {}),
+                            **sc_kw))
     return out
 
 
