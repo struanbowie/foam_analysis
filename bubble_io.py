@@ -386,25 +386,82 @@ def plot_shapes(img, shapes, ax=None, title=None, color=None, view_pad=0):
     return ax
 
 
-def copy_to_training(run_dir: str, annotation_dir: str, frames: Optional[list] = None) -> list:
-    """Copy reviewed frames (tif + json, whole frame as the 'fully annotated' region) into the
-    training annotation folder. Existing training files are never overwritten."""
-    import shutil
-    lst = list_results(run_dir)
-    lst = lst[lst["reviewed"]]
-    if frames is not None:
-        lst = lst[lst["frame"].isin(frames)]
-    os.makedirs(annotation_dir, exist_ok=True)
-    copied = []
-    for _, r in lst.iterrows():
-        dst_js = os.path.join(annotation_dir, r.frame + ".json")
-        if os.path.exists(dst_js):
-            print("already in training set, skipped:", r.frame)
+def _reviewed_frames(results_root: str) -> pd.DataFrame:
+    """All reviewed frame JSONs under results_root (any run or train folder; tracking output excluded)."""
+    rows = []
+    for js in sorted(glob.glob(os.path.join(results_root, "**", "shapes", "*.json"), recursive=True)):
+        if os.sep + "tracked" + os.sep in js:
             continue
-        with open(r.json_path) as f:
+        with open(js) as f:
             a = json.load(f)
-        shutil.copy2(os.path.join(os.path.dirname(r.json_path), a["image"]), os.path.join(annotation_dir, a["image"]))
-        br.save_annotation(dst_js, a["image"], a["bubbles"], [])   # no ROI = whole frame is complete
-        copied.append(r.frame)
-    print(f"copied {len(copied)} reviewed frame(s) to {annotation_dir}")
-    return copied
+        if a.get("reviewed") and a.get("bubbles"):
+            rows.append(dict(frame=os.path.splitext(os.path.basename(js))[0], json_path=js,
+                             mtime=os.path.getmtime(js), n_bubbles=len(a["bubbles"])))
+    return pd.DataFrame(rows, columns=["frame", "json_path", "mtime", "n_bubbles"])
+
+
+def sync_reviewed_to_training(results_root: str, annotation_dir: str, run_dir: Optional[str] = None,
+                              frames: Optional[list] = None, verbose=True) -> pd.DataFrame:
+    """Copy every reviewed frame (tif + json) from the results folders into the training annotations.
+
+    The whole frame counts as fully annotated (no ROI). Run it before training; re-running is safe:
+    * new reviewed frames are copied;
+    * frames copied earlier are updated when you have corrected them again in the results folder since;
+    * annotations you made in the training folder yourself, or edited there after copying, are never overwritten;
+    * a frame reviewed in several results folders: the most recently saved version is used.
+    run_dir: only this results folder (default: everything under results_root). frames: only these frame names.
+    Returns one row per reviewed frame with the action taken.
+    """
+    import shutil
+    src = _reviewed_frames(run_dir if run_dir is not None else results_root)
+    if frames is not None:
+        src = src[src["frame"].isin(frames)]
+    os.makedirs(annotation_dir, exist_ok=True)
+    rows = []
+    for frame, g in src.sort_values("mtime").groupby("frame", sort=False):
+        r = g.iloc[-1]                                   # newest version of this frame
+        dst_js = os.path.join(annotation_dir, frame + ".json")
+        action = "copied"
+        if os.path.exists(dst_js):
+            with open(dst_js) as f:
+                old = json.load(f)
+            imp = old.get("imported_from")
+            if imp is None:
+                action = "skipped (own training annotation)"
+            elif os.path.getmtime(dst_js) > old.get("imported_at", 0) + 5:
+                action = "skipped (edited in the training folder)"
+            elif os.path.abspath(r.json_path) == imp.get("path") and r.mtime <= imp.get("mtime", 0) + 1e-3:
+                action = "up to date"
+            else:
+                action = "updated"
+        if action in ("copied", "updated"):
+            with open(r.json_path) as f:
+                a = json.load(f)
+            src_img = os.path.join(os.path.dirname(r.json_path), a["image"])
+            if not os.path.exists(src_img):
+                rows.append(dict(frame=frame, action="skipped (frame image missing)", source=r.json_path,
+                                 n_bubbles=r.n_bubbles))
+                continue
+            dst_img = os.path.join(annotation_dir, a["image"])
+            if not os.path.exists(dst_img):
+                shutil.copy2(src_img, dst_img)
+            now = time.time()
+            with open(dst_js, "w") as f:                 # no ROI = whole frame is complete
+                json.dump(dict(image=a["image"], bubbles=a["bubbles"], rois=[], frame_path=a.get("frame_path", ""),
+                               imported_from=dict(path=os.path.abspath(r.json_path), mtime=r.mtime),
+                               imported_at=now), f)
+            os.utime(dst_js, (now, now))
+        rows.append(dict(frame=frame, action=action, source=r.json_path, n_bubbles=r.n_bubbles,
+                         n_versions=len(g)))
+    out = pd.DataFrame(rows, columns=["frame", "action", "source", "n_bubbles", "n_versions"])
+    if verbose:
+        counts = out["action"].value_counts().to_dict() if len(out) else {}
+        print(f"{len(out)} reviewed frame(s) in {run_dir or results_root}: {counts}")
+    return out
+
+
+def copy_to_training(run_dir: str, annotation_dir: str, frames: Optional[list] = None) -> list:
+    """Copy (or update) the reviewed frames of one results folder in the training annotations
+    (see sync_reviewed_to_training). frames: only these frame names."""
+    out = sync_reviewed_to_training(run_dir, annotation_dir, run_dir=run_dir, frames=frames)
+    return out.loc[out["action"].isin(["copied", "updated"]), "frame"].tolist()
