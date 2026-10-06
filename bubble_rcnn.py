@@ -86,6 +86,8 @@ class RCNNConfig:
     um_per_px: float = 3.2
 
     # --- bubbles cut by the image edge ---
+    edge_min_fit_arc_deg: float = 45.0      # visible arc needed for any fit; shorter (a sliver at the edge): the full
+                                            # size is unknown, the visible part is measured (fit_reliable=False)
     edge_min_arc_deg: float = 100.0         # visible arc needed to even try an ellipse; shorter arcs -> circle
     edge_ellipse_gain: float = 1.6          # use the ellipse only if its RMS residual is this many times smaller
                                             # than the circle's (otherwise the circle is more reliable)
@@ -576,6 +578,8 @@ def outline_fit(mask: np.ndarray, cfg: RCNNConfig, offset=(0, 0), full_hw=None, 
     xc, yc, r = _fit_circle(xy)
     ang = np.arctan2(xy[:, 1] - yc, xy[:, 0] - xc)
     arc_deg = 10.0 * len(np.unique(np.floor((ang + np.pi) / np.deg2rad(10)).astype(int)))
+    if truncated and arc_deg < cfg.edge_min_fit_arc_deg:      # sliver: a fitted circle would be arbitrary
+        return dict(truncated=True, kind="visible", arc_deg=float(arc_deg), visible_frac=np.nan)
     fit = dict(x=xc, y=yc, a=r, b=r, theta=0.0, kind="circle")
     if not truncated or arc_deg >= cfg.edge_min_arc_deg:
         em = _fit_ellipse(xy)
@@ -623,7 +627,10 @@ def measure_mask(m: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
                eccentricity=rp.eccentricity, solidity=rp.solidity, area_visible_px2=area_vis,
                edge_truncated=False, fit_kind="mask", arc_deg=360.0, outline_visible_frac=1.0,
                fit_reliable=True)
-    if fit is not None and fit["truncated"]:
+    if fit is not None and fit["truncated"] and fit["kind"] == "visible":
+        row.update(edge_truncated=True, fit_kind="visible", arc_deg=fit["arc_deg"], outline_visible_frac=np.nan,
+                   fit_reliable=False)
+    elif fit is not None and fit["truncated"]:
         a, b = max(fit["a"], fit["b"]), min(fit["a"], fit["b"])
         th = fit["theta"] if fit["a"] >= fit["b"] else fit["theta"] + np.pi / 2
         orient = np.nan if fit["kind"] == "circle" else _orientation_from_row_axis(th)
@@ -744,32 +751,35 @@ def _fit_ellipse(xy):
     return em if em.estimate(xy) else None
 
 
-def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="polygon", tol=0.4, min_score=None) -> list:
+def masks_to_shapes(pred: dict, cfg: RCNNConfig, kind="polygon", tol=0.4, min_score=None, max_score=None,
+                    with_score=False) -> list:
     """Convert predicted masks to annotation shapes (native coords) for correction in napari.
-    kind='polygon' keeps the predicted shape; 'ellipse' gives easier-to-edit ellipses."""
+    kind='polygon' keeps the predicted shape; 'ellipse' gives easier-to-edit ellipses.
+    min_score / max_score: keep scores in [min_score, max_score). with_score: add the score to each shape."""
     s = cfg.model_scale
     out = []
     for m, sc in zip(pred["masks"], pred["scores"]):
-        if min_score is not None and sc < min_score:
+        if (min_score is not None and sc < min_score) or (max_score is not None and sc >= max_score):
             continue
         cs = measure.find_contours(np.pad(m, 1).astype(np.float32), 0.5)
         if not cs:
             continue
         c = max(cs, key=len) - 1
         c = model_to_native(c, s)
+        sc_kw = dict(score=round(float(sc), 4)) if with_score else {}
         if kind == "ellipse":
             fit = outline_fit(m, cfg)    # edge-aware: centre may lie outside the image
-            if fit is not None:
+            if fit is not None and fit["kind"] != "visible":
                 xc, yc, a, b, th = fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"]
                 ca, sa = np.cos(th), np.sin(th)
                 ux, uy = np.array([ca, sa]) * a, np.array([-sa, ca]) * b
                 corners_xy = [(xc - ux[0] - uy[0], yc - ux[1] - uy[1]), (xc + ux[0] - uy[0], yc + ux[1] - uy[1]),
                               (xc + ux[0] + uy[0], yc + ux[1] + uy[1]), (xc - ux[0] + uy[0], yc - ux[1] + uy[1])]
-                out.append(dict(type="ellipse", data=[[y, x] for x, y in corners_xy]))
+                out.append(dict(type="ellipse", data=[[y, x] for x, y in corners_xy], **sc_kw))
                 continue
         c = measure.approximate_polygon(c, tol)
         if len(c) >= 4:
-            out.append(dict(type="polygon", data=c[:-1].tolist()))
+            out.append(dict(type="polygon", data=c[:-1].tolist(), **sc_kw))
     return out
 
 
@@ -802,7 +812,7 @@ def plot_instances(img, pred_or_masks, cfg: RCNNConfig, ax=None, title=None, roi
             ax.plot(c[:, 1], c[:, 0], lw=0.9, color=col)
         if show_fit:
             fit = outline_fit(m, cfg)
-            if fit is not None and fit["truncated"]:
+            if fit is not None and fit["truncated"] and fit["kind"] != "visible":
                 px, py = _ellipse_points(fit["x"], fit["y"], fit["a"], fit["b"], fit["theta"])
                 ax.plot(np.r_[px, px[:1]], np.r_[py, py[:1]], ls="--", lw=0.8, color=col)
     if cfg.inner_margin > 0:

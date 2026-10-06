@@ -468,23 +468,13 @@ def plot_size_heatmap(bubbles, m, time_label, var="r_eq_um", label="equivalent r
     return ax
 
 
-def make_overlay_gif(run_dir, bubbles, m, norm, out_path, cmap="RdYlGn_r", alpha=0.45, every=1, fps=10,
-                     width_in=8.0, dpi=90, time_fmt=lambda r: f"frame {r['frame_idx']}"):
-    """Animated GIF of the area-coloured overlays (one shared colour scale) for every `every`-th frame of m."""
+def save_gif(figures, out_path, fps=10, dpi=90):
+    """Write matplotlib figures (any iterable; each is closed after rendering) as an animated GIF."""
     import io as _io
     import matplotlib.pyplot as plt
     from PIL import Image
-    import bubble_io as bio
-    rows = m.iloc[::max(1, int(every))]
     frames_out = []
-    for _, r in rows.iterrows():
-        img, shapes = bio.load_frame(run_dir, r["frame"])
-        b = bubbles[bubbles["frame"] == r["frame"]]
-        h = width_in * img.shape[0] / img.shape[1]
-        fig, ax = plt.subplots(figsize=(width_in * 1.15, h + 0.5))
-        plot_area_overlay(img, [shapes[i] for i in b["bubble_id"]], b["area_um2"].to_numpy(), norm,
-                          cmap=cmap, ax=ax, alpha=alpha, title=f"{time_fmt(r)}  ·  {len(b)} bubbles")
-        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.8, label="bubble area [µm²]")
+    for fig in figures:
         buf = _io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", facecolor="white")
         plt.close(fig)
@@ -498,3 +488,22 @@ def make_overlay_gif(run_dir, bubbles, m, norm, out_path, cmap="RdYlGn_r", alpha
     frames_out[0].save(out_path, save_all=True, append_images=frames_out[1:], duration=int(1000 / fps), loop=0)
     return out_path, len(frames_out)
 
+
+def make_overlay_gif(run_dir, bubbles, m, norm, out_path, cmap="RdYlGn_r", alpha=0.45, every=1, fps=10,
+                     width_in=8.0, dpi=90, time_fmt=lambda r: f"frame {r['frame_idx']}"):
+    """Animated GIF of the area-coloured overlays (one shared colour scale) for every `every`-th frame of m."""
+    import matplotlib.pyplot as plt
+    import bubble_io as bio
+
+    def figures():
+        for _, r in m.iloc[::max(1, int(every))].iterrows():
+            img, shapes = bio.load_frame(run_dir, r["frame"])
+            b = bubbles[bubbles["frame"] == r["frame"]]
+            h = width_in * img.shape[0] / img.shape[1]
+            fig, ax = plt.subplots(figsize=(width_in * 1.15, h + 0.5))
+            plot_area_overlay(img, [shapes[i] for i in b["bubble_id"]], b["area_um2"].to_numpy(), norm,
+                              cmap=cmap, ax=ax, alpha=alpha, title=f"{time_fmt(r)}  ·  {len(b)} bubbles")
+            fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.8, label="bubble area [µm²]")
+            yield fig
+
+    return save_gif(figures(), out_path, fps=fps, dpi=dpi)

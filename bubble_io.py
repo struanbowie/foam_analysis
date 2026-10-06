@@ -175,43 +175,70 @@ def write_run_info(run_dir: str, model_path: str, cfg: br.RCNNConfig, extra: Opt
         json.dump(info, f, indent=2, default=str)
 
 
+def candidates_dir(run_dir: str) -> str:
+    return os.path.join(run_dir, "candidates")
+
+
 def draft_frames(model, cfg: br.RCNNConfig, frame_paths, run_dir: str, model_path: str = "",
-                 kind: str = "polygon", overwrite_unreviewed: bool = False, show_every: int = 0):
+                 kind: str = "polygon", overwrite_unreviewed: bool = False, show_every: int = 0,
+                 candidate_thresh: Optional[float] = None):
     """Predict each frame and write <frame>.tif + <frame>.json into run_dir/shapes/.
 
     Existing JSONs are never touched unless overwrite_unreviewed=True AND they are not reviewed.
     kind: 'polygon' keeps the predicted outline (best for non-spherical bubbles; edge bubbles are
     still measured edge-aware at export), 'ellipse' gives shapes that are quicker to adjust.
-    Returns a DataFrame with one row per frame (status: drafted / skipped).
+    candidate_thresh: also save the model's low-score detections (score in [candidate_thresh,
+    cfg.score_thresh)) to run_dir/candidates/<frame>.json, used by bubble_track to bridge frames in which a
+    bubble was missed. Frames that already have a draft but no candidates are predicted again for the
+    candidates only (the draft is left as it is).
+    Returns a DataFrame with one row per frame (status: drafted / candidates / skipped).
     """
     import tifffile
     d = shapes_dir(run_dir)
     os.makedirs(d, exist_ok=True)
+    if candidate_thresh is not None:
+        os.makedirs(candidates_dir(run_dir), exist_ok=True)
     rows, t0 = [], time.time()
     for k, f in enumerate(frame_paths):
         js = _json_for(run_dir, f)
         name = os.path.splitext(os.path.basename(f))[0]
+        cj = os.path.join(candidates_dir(run_dir), name + ".json")
+        need_shapes, n_old = True, 0
         if os.path.exists(js):
             with open(js) as fh:
                 old = json.load(fh)
-            if old.get("reviewed") or not overwrite_unreviewed:
-                rows.append(dict(frame=name, status="skipped (exists" + (", reviewed)" if old.get("reviewed") else ")"),
-                                 n_bubbles=len(old.get("bubbles", []))))
-                continue
+            need_shapes = not old.get("reviewed") and overwrite_unreviewed
+            n_old = len(old.get("bubbles", []))
+            reason = "skipped (exists" + (", reviewed)" if old.get("reviewed") else ")")
+        need_cands = candidate_thresh is not None and (need_shapes or not os.path.exists(cj))
+        if not need_shapes and not need_cands:
+            rows.append(dict(frame=name, status=reason, n_bubbles=n_old))
+            continue
         img = bs.load_image(f)
         tif = os.path.join(d, name + ".tif")
         if not os.path.exists(tif):
             tifffile.imwrite(tif, img)
         x = br.prepare_image(img, cfg)
-        pred = br.predict(model, x, cfg)
-        shapes = br.masks_to_shapes(pred, cfg, kind=kind)
-        with open(js, "w") as fh:
-            json.dump(dict(image=name + ".tif", bubbles=shapes, rois=[], reviewed=False,
-                           model=os.path.basename(model_path), drafted_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-                           frame_path=os.path.abspath(f), score_thresh=cfg.score_thresh), fh)
-        rows.append(dict(frame=name, status="drafted", n_bubbles=len(shapes)))
+        lo = min(cfg.score_thresh, candidate_thresh) if need_cands else cfg.score_thresh
+        pred = br.predict(model, x, cfg, score_thresh=lo)    # same high-score result as with cfg.score_thresh
+        if need_shapes:
+            shapes = br.masks_to_shapes(pred, cfg, kind=kind, min_score=cfg.score_thresh)
+            with open(js, "w") as fh:
+                json.dump(dict(image=name + ".tif", bubbles=shapes, rois=[], reviewed=False,
+                               model=os.path.basename(model_path), drafted_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                               frame_path=os.path.abspath(f), score_thresh=cfg.score_thresh), fh)
+        if need_cands:
+            cands = br.masks_to_shapes(pred, cfg, kind="polygon", min_score=candidate_thresh,
+                                       max_score=cfg.score_thresh, with_score=True)
+            with open(cj, "w") as fh:
+                json.dump(dict(image=name + ".tif", bubbles=cands, score_range=[candidate_thresh, cfg.score_thresh],
+                               model=os.path.basename(model_path), drafted_at=time.strftime("%Y-%m-%d %H:%M:%S")), fh)
+        n = len(shapes) if need_shapes else n_old
+        rows.append(dict(frame=name, status="drafted" if need_shapes else "candidates", n_bubbles=n,
+                         n_candidates=len(cands) if need_cands else np.nan))
         if show_every and (k % show_every == 0 or k == len(frame_paths) - 1):
-            print(f"{k + 1}/{len(frame_paths)}  {name}: {len(shapes)} bubbles  ({time.time() - t0:.0f}s)")
+            extra = f", {len(cands)} low-score" if need_cands else ""
+            print(f"{k + 1}/{len(frame_paths)}  {name}: {n} bubbles{extra}  ({time.time() - t0:.0f}s)")
     return pd.DataFrame(rows)
 
 
