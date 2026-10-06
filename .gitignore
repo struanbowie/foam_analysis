@@ -6,4 +6,4 @@ raw/
 *.npy
 annotations/*.tif
 annotations/excluded/*.tif
-results/*/shapes/*.tif
+results/**/shapes/*.tif

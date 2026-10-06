@@ -534,7 +534,7 @@ def _ellipse_points(xc, yc, a, b, th, n=360):
     return x, y
 
 
-def outline_fit(mask: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
+def outline_fit(mask: np.ndarray, cfg: RCNNConfig, offset=(0, 0), full_hw=None, edge_only=False) -> Optional[dict]:
     """Fit an ellipse/circle to one predicted mask, in NATIVE coordinates.
 
     Masks of bubbles cut by the image edge have a straight side along the border. Those border
@@ -542,15 +542,20 @@ def outline_fit(mask: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
     image. A circle is used unless the arc is long enough (edge_min_arc_deg) AND an ellipse fits it
     clearly better (edge_ellipse_gain): on short noisy arcs ellipse fits are unstable.
     Returns dict(x, y, a, b, theta, kind, truncated, arc_deg, visible_frac) or None.
+    `mask` may be a crop of the full-frame mask (with >= 1 px background margin except at the image
+    border); `offset` is its top-left corner and `full_hw` the full model-resolution frame size.
+    edge_only=True skips the fit for bubbles that do not touch the image edge (returns truncated=False).
     """
     s = cfg.model_scale
-    H, W = mask.shape
+    H, W = full_hw if full_hw is not None else mask.shape
     cs = measure.find_contours(np.pad(mask, 1).astype(np.float32), 0.5)
     if not cs:
         return None
-    c = max(cs, key=len) - 1                      # model (row, col); border runs at -0.5 / H-0.5
+    c = max(cs, key=len) - 1 + np.asarray(offset, float)   # model (row, col); border runs at -0.5 / H-0.5
     on_edge = (c[:, 0] <= 0) | (c[:, 0] >= H - 1) | (c[:, 1] <= 0) | (c[:, 1] >= W - 1)
     truncated = on_edge.sum() >= 3
+    if edge_only and not truncated:
+        return dict(truncated=False)
     arc = c[~on_edge] if truncated else c
     if len(arc) < 6:
         return None
@@ -588,12 +593,17 @@ def _orientation_from_row_axis(theta_major):
 def measure_mask(m: np.ndarray, cfg: RCNNConfig) -> Optional[dict]:
     """Measure one instance mask (model resolution) -> row dict in native px (see measure_instances)."""
     s = cfg.model_scale
-    if not m.any():
+    rows, cols = np.flatnonzero(m.any(axis=1)), np.flatnonzero(m.any(axis=0))
+    if not len(rows):
         return None
-    rp = measure.regionprops(m.astype(np.uint8))[0]
-    cy, cx = model_to_native(rp.centroid, s)
+    # work on a crop around the bubble (1 px margin) - much faster than the full frame
+    r0, r1 = max(rows[0] - 1, 0), min(rows[-1] + 2, m.shape[0])
+    c0, c1 = max(cols[0] - 1, 0), min(cols[-1] + 2, m.shape[1])
+    crop = m[r0:r1, c0:c1]
+    rp = measure.regionprops(crop.astype(np.uint8))[0]
+    cy, cx = model_to_native(np.asarray(rp.centroid) + (r0, c0), s)
     area_vis = rp.area / s ** 2
-    fit = outline_fit(m, cfg)
+    fit = outline_fit(crop, cfg, offset=(r0, c0), full_hw=m.shape, edge_only=True)
     row = dict(x=cx, y=cy, area_px2=area_vis,
                r_eq=np.sqrt(area_vis / np.pi), major_axis=rp.axis_major_length / s,
                minor_axis=rp.axis_minor_length / s, orientation_deg=np.degrees(rp.orientation),

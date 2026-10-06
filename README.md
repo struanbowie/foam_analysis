@@ -11,6 +11,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | 2. Train the model | `bubble_training.ipynb` | `annotations/` (your napari annotations), `models/` (trained models) |
 | 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed outlines), `bubbles.csv`, `frames.csv` |
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
+| 4b. Analyse one train, every frame | `bubble_train_analysis.ipynb` | predicts + exports all frames of train `N` to `results/trains/tid<N>/`, time-series plots and an overlay GIF in `figures/` |
 
 Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
 
@@ -32,7 +33,7 @@ Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (F
 | folder | in git? | content |
 |---|---|---|
 | `annotations/` | `.json` yes, `.tif` no | training annotations (+ frame copies) |
-| `results/` | `.json`/`.csv` yes, `.tif` no | reviewed predictions and measurements per inference run |
+| `results/` | `.json`/`.csv` yes, `.tif` no | reviewed predictions and measurements per inference run; `results/trains/tid<N>/` per-train runs |
 | `raw/` | no | normalised frames from step 1 |
 | `models/` | no | trained models (~180 MB each) |
 
