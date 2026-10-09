@@ -1,5 +1,5 @@
 {
-  "exported": "2026-10-05 20:32:59",
+  "exported": "2026-10-07 18:50:42",
   "include_unreviewed": false,
   "config": {
     "annotation_dir": "annotations",
@@ -64,6 +64,11 @@
     "mask_thresh": 0.5,
     "mask_nms_iou": 0.7,
     "um_per_px": 3.2,
+    "shape_tol_px": 0.4,
+    "shape_tol_rel": 0.05,
+    "circle_min_axis_ratio": 0.93,
+    "shape_min_iou": 0.8,
+    "edge_min_fit_arc_deg": 45.0,
     "edge_min_arc_deg": 100.0,
     "edge_ellipse_gain": 1.6,
     "edge_max_axis_ratio": 2.5,

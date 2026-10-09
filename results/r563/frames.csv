@@ -1,9 +1,1 @@
-frame,train,frame_idx,reviewed,n_bubbles,n_in_analysis,image_height_px,image_width_px,model
-r563_svd_normalised_tr050_tid0_015,0,15,True,306,306,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid1_015,1,15,True,287,287,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid2_015,2,15,True,267,267,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid3_015,3,15,True,232,232,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid4_015,4,15,True,392,392,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid5_015,5,15,True,386,386,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid6_015,6,15,True,359,359,250,400,bubble_rcnn_best.pt
-r563_svd_normalised_tr050_tid7_015,7,15,True,319,319,250,400,bubble_rcnn_best.pt
+
