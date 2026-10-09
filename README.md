@@ -8,6 +8,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | step | notebook | output |
 |---|---|---|
 | 1. Normalise a run | `preprocessing/normalise_runs_TKM_fast_2.ipynb` | `raw/jpg_<run>/` clean 400×250 frames (analysis), `raw/jpg_<run>_annotated/` with scale bar + time stamp (figures), optional `raw/<run>.npy` |
+| 1b. GIFs of the runs (optional) | `preprocessing/make_run_gifs.ipynb` | `raw/gifs/<run>.gif` from the clean frames of every run that has no GIF yet |
 | 2. Train the model | `bubble_training.ipynb` | `annotations/` (your napari annotations), `models/` (trained models) |
 | 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed outlines), `bubbles.csv`, `frames.csv` |
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
