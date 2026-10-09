@@ -2,7 +2,8 @@
 Statistics and plots for exported bubble results (bubble_analysis.ipynb).
 
 Input: the `bubbles` / `frames` tables from bubble_io.load_results, with a time column `t`
-(train number, or real time if TRAIN_TIMES is given in the notebook).
+(see train_times: the train number, or real times given in the notebook). Results may hold frames of
+several runs (column `run`); labels then name the run as well as the train.
 
 Metrics per frame (see frame_metrics):
     n_bubbles, density_per_mm2          number of bubbles, per mm^2 of field of view
@@ -41,7 +42,32 @@ def style():
 
 
 def train_label(r):
-    return f"train {r['train']}"
+    lab = r.get("label") if hasattr(r, "get") else None
+    return lab if isinstance(lab, str) and lab else f"train {r['train']}"
+
+
+def train_times(frames, times=None, verbose=True):
+    """Time `t` of every frame from its run and train.
+    times: None (the train number; with several runs the trains are numbered on from one run to the next, in
+    the order of the run names), or a dict {train: t} or {(run, train): t} (real times, e.g. minutes)."""
+    runs = sorted(frames["run"].unique()) if "run" in frames else [None]
+    if times:
+        def get(r):
+            for k in ((r.get("run"), r["train"]), r["train"]):
+                if k in times:
+                    return times[k]
+            raise KeyError(f"no time for run {r.get('run')} train {r['train']} in TRAIN_TIMES")
+        return frames.apply(get, axis=1).astype(float)
+    if len(runs) <= 1:
+        return frames["train"].astype(float)
+    offset, off = {}, 0
+    for run in runs:
+        offset[run] = off
+        off += int(frames.loc[frames["run"] == run, "train"].max()) + 1
+    if verbose:
+        print("several runs: t = train number counted on from one run to the next (" + ", ".join(
+            f"{run}: train 0 = {o}" for run, o in offset.items()) + "); set TRAIN_TIMES for real times")
+    return (frames["train"] + frames["run"].map(offset)).astype(float)
 
 
 def train_colors(n):
@@ -70,6 +96,7 @@ def coverage_fraction(shapes, native_hw, scale=2.0):
 def frame_metrics(bubbles, frames, run_dir=None, um_per_px=3.2):
     """One row per frame with the metrics listed in the module docstring."""
     rows = []
+    multi_run = "run" in frames and frames["run"].nunique() > 1
     for _, fr in frames.sort_values(["t", "frame"]).iterrows():
         b = bubbles[bubbles["frame"] == fr["frame"]]
         r = b["r_eq_um"].to_numpy()
@@ -77,7 +104,10 @@ def frame_metrics(bubbles, frames, run_dir=None, um_per_px=3.2):
         hw = (fr["image_height_px"], fr["image_width_px"])
         fov_mm2 = hw[0] * hw[1] * (um_per_px * 1e-3) ** 2
         aspect = (b["minor_axis"] / b["major_axis"].clip(lower=1e-9)).to_numpy()
-        row = dict(train=fr["train"], frame_idx=fr.get("frame_idx"), t=fr["t"], frame=fr["frame"], n_bubbles=len(b),
+        run = fr.get("run")
+        row = dict(run=run, train=fr["train"], frame_idx=fr.get("frame_idx"), t=fr["t"], frame=fr["frame"],
+                   label=f"{run} train {fr['train']}" if multi_run else f"train {fr['train']}",
+                   tag=f"{run}/{fr['train']}" if multi_run else f"{fr['train']}", n_bubbles=len(b),
                    density_per_mm2=len(b) / fov_mm2,
                    r_mean_um=r.mean() if len(r) else np.nan,
                    r_sem_um=r.std(ddof=1) / np.sqrt(len(r)) if len(r) > 1 else np.nan,
@@ -190,9 +220,11 @@ def plot_count(m, time_label, ax=None, smooth=1):
                         ha="center", fontsize=8, color=INK2)
     ax.set_ylim(0, m["n_bubbles"].max() * 1.15)
     ax.set_ylabel("bubbles per frame")
-    sec = ax.secondary_yaxis("right", functions=(lambda n: n / m["n_bubbles"].iloc[0] * m["density_per_mm2"].iloc[0],
-                                                 lambda d: d / m["density_per_mm2"].iloc[0] * m["n_bubbles"].iloc[0]))
-    sec.set_ylabel("per mm²")                    # same quantity, rescaled (not a second data series)
+    k = (m["density_per_mm2"] / m["n_bubbles"])[m["n_bubbles"] > 0]       # 1 / field of view [mm²]
+    if len(k):
+        k = float(k.iloc[0])
+        sec = ax.secondary_yaxis("right", functions=(lambda n: n * k, lambda d: d / k))
+        sec.set_ylabel("per mm²")                # same quantity, rescaled (not a second data series)
     _xaxis(ax, m, time_label)
     ax.set_title("Bubble count" + (f" (line: {smooth}-frame running mean)" if smooth and smooth > 1 else ""))
     return ax
@@ -318,7 +350,7 @@ def plot_relative(m, time_label, ax=None, smooth=1):
         ends.append(_series(ax, m["t"], m[col] / base, c, label=lab, many=many, smooth=smooth, ms=6)[-1])
     ax.axhline(1, color=INK2, lw=0.8, ls=":")
     _end_labels(ax, _label_x(m), ends, [l for _, l in series])
-    ax.set_ylabel("relative to the first frame" if many else f"relative to train {m['train'].iloc[0]}")
+    ax.set_ylabel("relative to the first frame" if many else f"relative to {train_label(m.iloc[0])}")
     _xaxis(ax, m, time_label)
     _room_right(ax, m, 0.3)
     ax.set_title("Coalescence check (relative change)")
@@ -411,7 +443,7 @@ def plot_drift(m, native_hw, um_per_px=3.2, img=None, min_zoom_um=40, time_label
                             arrowprops=dict(arrowstyle="-|>", color=INK2, lw=1.2, shrinkA=6, shrinkB=6))
             for c, (_, r) in zip(cols, m.iterrows()):
                 ax.plot(r.cx_um, r.cy_um, "o", color=c, ms=10, mec="white", mew=1.2, zorder=3)
-                ax.annotate(f"{r.train}", (r.cx_um, r.cy_um), xytext=(7, 5), textcoords="offset points",
+                ax.annotate(str(r.get("tag", r.train)), (r.cx_um, r.cy_um), xytext=(7, 5), textcoords="offset points",
                             fontsize=9, color=INK, zorder=4)
         if k == 1:
             ax.set_xlim(cx - half, cx + half); ax.set_ylim(cy + half, cy - half)

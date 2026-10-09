@@ -7,6 +7,7 @@ raw/
 annotations/*.tif
 annotations/excluded/*.tif
 results/**/shapes/*.tif
-results/**/candidates/
-results/**/tracked/shapes/
 results/**/figures/*.gif
+# output of the removed bubble tracking (delete these folders; kept here so they are never committed)
+results/**/candidates/
+results/**/tracked/
