@@ -10,7 +10,7 @@ Metrics per frame (see frame_metrics):
     r_mean_um (+ r_sem_um), r_median_um, r_std_um, r_max_um
     r32_um                              Sauter mean radius sum(r^3)/sum(r^2), weights large bubbles (volume/surface)
     polydispersity                      r_std / r_mean
-    area_total_um2                      sum of bubble areas (overlapping bubbles counted fully)
+    area_total_um2                      sum of bubble areas (overlapping bubbles counted fully); fov_mm2 field of view
     coverage_frac                       fraction of the frame covered by at least one bubble (union of outlines)
     volume_um3                          sum of 4/3 pi r^3: sphere-equivalent gas volume proxy
     aspect_median, frac_noncircular     minor/major axis; share of bubbles with aspect < 0.8
@@ -115,7 +115,7 @@ def frame_metrics(bubbles, frames, run_dir=None, um_per_px=3.2):
                    r_std_um=r.std(ddof=1) if len(r) > 1 else np.nan,
                    r_max_um=r.max() if len(r) else np.nan,
                    r32_um=(r ** 3).sum() / (r ** 2).sum() if len(r) else np.nan,
-                   area_total_um2=a.sum(), volume_um3=(4 / 3 * np.pi * r ** 3).sum(),
+                   area_total_um2=a.sum(), fov_mm2=fov_mm2, volume_um3=(4 / 3 * np.pi * r ** 3).sum(),
                    aspect_median=np.median(aspect) if len(aspect) else np.nan,
                    frac_noncircular=float(np.mean(aspect < 0.8)) if len(aspect) else np.nan,
                    cx_um=np.average(b["x"], weights=a) * um_per_px if len(b) else np.nan,
@@ -243,6 +243,28 @@ def plot_mean_size(m, time_label, ax=None, smooth=1):
     _xaxis(ax, m, time_label)
     _room_right(ax, m)
     ax.set_title("Average bubble size (band: mean ± s.e.)")
+    return ax
+
+
+def plot_total_area(m, time_label, ax=None, smooth=1):
+    """Total bubble area per frame (sum of all bubbles, overlaps counted fully) and, if computed, the area covered
+    by bubbles (overlaps counted once), in mm²; right axis: the same as % of the field of view."""
+    import matplotlib.pyplot as plt
+    ax = ax or plt.subplots(figsize=(6.5, 4))[1]
+    many = _many(m)
+    series = [(m["area_total_um2"] * 1e-6, "total (Σ areas)", C[0])]
+    if "coverage_frac" in m:
+        series.append((m["coverage_frac"] * m["fov_mm2"], "covered (overlaps once)", C[1]))
+    ends = [_series(ax, m["t"], y, col, label=lab, many=many, smooth=smooth)[-1] for y, lab, col in series]
+    ax.set_ylim(bottom=0)
+    _end_labels(ax, _label_x(m), ends, [lab for _, lab, _ in series])
+    ax.set_ylabel("bubble area [mm²]")
+    fov = float(m["fov_mm2"].iloc[0])
+    sec = ax.secondary_yaxis("right", functions=(lambda v: v / fov * 100, lambda p: p * fov / 100))
+    sec.set_ylabel("% of the field of view")      # same quantity, rescaled (not a second data series)
+    _xaxis(ax, m, time_label)
+    _room_right(ax, m, 0.45)
+    ax.set_title("Total bubble area" + (f" (line: {smooth}-frame running mean)" if smooth and smooth > 1 else ""))
     return ax
 
 
