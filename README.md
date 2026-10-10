@@ -12,6 +12,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | 2. Train the model | `bubble_training.ipynb` | `annotations/` (your napari circles / ellipses on frames picked from any runs and trains), `models/` (trained models) |
 | 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed circles / ellipses), `bubbles.csv`, `frames.csv`; any selection of frames, trains or runs |
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
+| 4c. Compare runs | `bubble_compare_runs.ipynb` | count, size, area, ... per train with several runs on one plot, aligned on the laser-scan train (bubble-count jump), also relative to before the scan; figures in `results/compare/` |
 | 4b. Analyse one train, every frame | `bubble_train_analysis.ipynb` | predicts all frames of train `N` into the run's folder, `results/<run>/tid<N>/`, time-series plots and an overlay GIF in `figures/` |
 
 Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
