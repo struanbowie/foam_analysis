@@ -1,0 +1,8 @@
+frame,run,train,frame_idx,reviewed,n_bubbles,n_in_analysis,image_height_px,image_width_px,model,shapes_key
+r560_svd_normalised_tr050_tid0_010,r560,0,10,False,145,145,250,400,bubble_rcnn_best.pt,5d9971aff1c49d04
+r560_svd_normalised_tr050_tid1_010,r560,1,10,False,144,144,250,400,bubble_rcnn_best.pt,68a9da0c7f6cb314
+r560_svd_normalised_tr050_tid2_010,r560,2,10,False,132,132,250,400,bubble_rcnn_best.pt,339e2b8e1aa4738e
+r560_svd_normalised_tr050_tid3_010,r560,3,10,False,227,227,250,400,bubble_rcnn_best.pt,8f31a3adb4f54e87
+r560_svd_normalised_tr050_tid4_010,r560,4,10,False,191,191,250,400,bubble_rcnn_best.pt,1ae28f9d4889d4af
+r560_svd_normalised_tr050_tid5_010,r560,5,10,False,116,116,250,400,bubble_rcnn_best.pt,df284f73342a5cc4
+r560_svd_normalised_tr050_tid6_010,r560,6,10,False,92,92,250,400,bubble_rcnn_best.pt,1e559c401b9c7fb5
