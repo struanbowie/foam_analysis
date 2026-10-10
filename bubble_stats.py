@@ -635,11 +635,11 @@ def find_scan_trains(mt, scan=None, min_jump=1.3, verbose=True):
 
 def align_runs(mt, scan, align=True, normalise=False, cols=None):
     """Add x (train, or trains since the scan: 0 = first train after it) and, with normalise, divide every metric
-    by its mean over the run's trains before the scan (1 = as before the scan). Runs without a scan train are
-    dropped when aligning or normalising."""
+    by its maximum over the run's trains (1 = the run's largest value). Runs without a scan train are dropped
+    when aligning."""
     mt = mt.copy()
     mt["scan_train"] = mt["run"].map(scan)
-    if align or normalise:
+    if align:
         drop = sorted(mt.loc[mt["scan_train"].isna(), "run"].unique())
         if drop:
             print("no scan train for", ", ".join(drop), "-> left out (set SCAN_TRAINS)")
@@ -648,7 +648,7 @@ def align_runs(mt, scan, align=True, normalise=False, cols=None):
     if normalise:
         cols = cols or [c for c in TRAIN_COLS if c in mt]
         for run, g in mt.groupby("run"):
-            base = g.loc[g["train"] < g["scan_train"], cols].mean()
+            base = g[cols].max()
             mt.loc[g.index, cols] = g[cols] / base.where(base != 0)
             sems = [c + "_sem" for c in cols if c + "_sem" in mt]
             mt.loc[g.index, sems] = g[sems] / base.where(base != 0)[[s[:-4] for s in sems]].to_numpy()
@@ -679,19 +679,14 @@ def plot_runs(mt, col, ylabel, ax=None, align=True, normalise=False, title=None,
         ax.axvline(-0.5, color=INK2, lw=1, ls="--")
         ax.annotate("laser scan", (-0.5, 1), xycoords=("data", "axes fraction"), xytext=(4, -4),
                     textcoords="offset points", va="top", fontsize=8, color=INK2)
-    if normalise:      # log scale: a x30 jump and a x1.5 jump stay readable on one plot
-        ax.axhline(1, color=INK2, lw=0.8, ls=":")
-        ax.set_yscale("log")
-        lo, hi = ax.get_ylim()
-        ticks = (0.1, 0.2, 0.3, 0.5, 0.7, 1, 1.5, 2, 3, 5, 10, 20, 30, 50, 100) if hi / lo > 4 else \
-            (0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.5, 3)
-        _log_ticks(ax, [t for t in ticks if lo <= t <= hi] or [1], axis="y")
     xs = np.sort(mt["x"].unique())
     if len(xs) <= 16:
         ax.set_xticks(xs)
     ax.set_xlabel("trains since the laser scan (0 = first train after it)" if align else "train")
-    ax.set_ylabel(re.sub(r"\s*\[[^]]*\]", "", ylabel) + " (relative to before the scan)" if normalise else ylabel)
-    if not normalise:
+    ax.set_ylabel(re.sub(r"\s*\[[^]]*\]", "", ylabel) + " / run maximum" if normalise else ylabel)
+    if normalise:
+        ax.set_ylim(0, 1.08)
+    else:
         ax.set_ylim(bottom=0)
     ax.set_title(title or (re.sub(r"\s*\[[^]]*\]", "", ylabel) if normalise else ylabel))
     if legend:
