@@ -158,6 +158,18 @@ def load_runs(run_dirs, frame_idx=10, reviewed_only=False, in_analysis_only=True
     return bubbles, frames
 
 
+def drop_sparse(bubbles, frames, min_bubbles=30):
+    """Drop frames with fewer than min_bubbles bubbles (e.g. trains recorded before the scan reached the field of
+    view). Their few bubbles make ratios between trains explode and dominate trends. Returns (bubbles, frames,
+    dropped) with dropped = [(run, train, n), ...]."""
+    n = bubbles.groupby("frame").size().reindex(frames["frame"]).fillna(0).astype(int).to_numpy()
+    low = n < min_bubbles
+    dropped = [(r, int(t), int(k)) for r, t, k in zip(frames.loc[low, "run"], frames.loc[low, "train"], n[low])]
+    keep = frames.loc[~low, "frame"]
+    return (bubbles[bubbles["frame"].isin(keep)].reset_index(drop=True),
+            frames[~low].reset_index(drop=True), dropped)
+
+
 def run_colors(runs):
     runs = sorted(runs)
     if len(runs) <= len(RUN_COLORS):
@@ -468,6 +480,181 @@ def scaled_curves(bubbles, m, bins=None):
 
 
 # ----------------------------------------------------------------------------
+# Pooled size distribution: asymmetric fits
+# ----------------------------------------------------------------------------
+# All fits are left-truncated at r_min (the smallest radius the model detects reliably): the likelihood of each
+# bubble is f(r) / P(R >= r_min), so the missing small bubbles do not bias the fit. loc is fixed at 0.
+def _lognorm2(p, x, rmin):
+    """Two-component lognormal mixture (e.g. fresh + aged population). p = logit w, mu1, log s1, mu2, log s2."""
+    from scipy import stats
+    w = 1 / (1 + np.exp(-p[0]))
+    d1 = stats.lognorm(np.exp(p[2]), scale=np.exp(p[1]))
+    d2 = stats.lognorm(np.exp(p[4]), scale=np.exp(p[3]))
+    pdf = w * d1.pdf(x) + (1 - w) * d2.pdf(x)
+    norm = w * d1.sf(rmin) + (1 - w) * d2.sf(rmin)
+    cdf = (w * (d1.cdf(x) - d1.cdf(rmin)) + (1 - w) * (d2.cdf(x) - d2.cdf(rmin))) / norm
+    return pdf / norm, cdf, (w, d1, d2)
+
+
+FIT_MODELS = {   # name: (scipy distribution name, number of shape parameters)
+    "lognormal": ("lognorm", 1),
+    "gamma": ("gamma", 1),
+    "Weibull": ("weibull_min", 1),
+    "generalised gamma": ("gengamma", 2),
+    "2 x lognormal": (None, 4),
+}
+
+
+def _fit_one(name, x, w, rmin):
+    """Weighted, left-truncated maximum likelihood fit. Returns (theta, nll, pdf(r), cdf(r), dist)."""
+    from scipy import optimize, stats
+    dname, nsh = FIT_MODELS[name]
+    lx = np.log(x)
+    if dname is None:
+        q1, q2 = np.quantile(lx, [0.3, 0.8])
+        th0 = np.array([0.0, q1, np.log(0.35), q2, np.log(0.5)])
+        f = lambda th: -np.sum(w * np.log(np.maximum(_lognorm2(th, x, rmin)[0], 1e-300)))
+        res = optimize.minimize(f, th0, method="Nelder-Mead", options=dict(maxiter=8000, xatol=1e-6, fatol=1e-6))
+        pdf_fn = lambda r, th=res.x: _lognorm2(th, r, rmin)[0]
+        cdf_fn = lambda r, th=res.x: _lognorm2(th, r, rmin)[1]
+        return res.x, res.fun, pdf_fn, cdf_fn, _lognorm2(res.x, x[:1], rmin)[2]
+    dist = getattr(stats, dname)
+    if dname == "lognorm":
+        start = [lx.std(), 0, np.exp(lx.mean())]
+    else:
+        start = list(dist.fit(x, floc=0))
+    th0 = np.log(np.r_[start[:nsh], start[-1]])
+
+    def unpack(th):
+        e = np.exp(th)
+        return tuple(e[:nsh]) + (0.0, e[-1])
+
+    def nll(th):
+        a = unpack(th)
+        v = -np.sum(w * (dist.logpdf(x, *a) - dist.logsf(rmin, *a)))
+        return v if np.isfinite(v) else 1e300
+
+    res = optimize.minimize(nll, th0, method="Nelder-Mead", options=dict(maxiter=8000, xatol=1e-7, fatol=1e-7))
+    a = unpack(res.x)
+    d = dist(*a)
+    pdf_fn = lambda r: d.pdf(r) / d.sf(rmin)
+    cdf_fn = lambda r: (d.cdf(r) - d.cdf(rmin)) / d.sf(rmin)
+    return res.x, res.fun, pdf_fn, cdf_fn, d
+
+
+def _describe(name, d):
+    """Readable parameters, mode, mean and skewness of the untruncated fitted distribution."""
+    from scipy import optimize
+    from scipy.integrate import trapezoid
+    if name == "2 x lognormal":
+        w, d1, d2 = d
+        (a1, b1), (a2, b2) = sorted([(d1, w), (d2, 1 - w)], key=lambda t: t[0].median())
+        txt = (f"{b1:.0%} median {a1.median():.1f} µm (σ {a1.args[0]:.2f}) + {b2:.0%} median {a2.median():.1f} µm "
+               f"(σ {a2.args[0]:.2f})")
+        rr = np.geomspace(0.5, 500, 4000)
+        pdf = w * d1.pdf(rr) + (1 - w) * d2.pdf(rr)
+        mean = w * d1.mean() + (1 - w) * d2.mean()
+        m2 = w * d1.moment(2) + (1 - w) * d2.moment(2)
+        m3 = w * d1.moment(3) + (1 - w) * d2.moment(3)
+        sd = np.sqrt(m2 - mean ** 2)
+        skew = (m3 - 3 * mean * sd ** 2 - mean ** 3) / sd ** 3
+        return txt, rr[np.argmax(pdf)], mean, skew
+    a = d.args
+    if name == "lognormal":
+        txt = f"median {d.median():.1f} µm, σ(ln r) {a[0]:.3f}"
+    elif name == "gamma":
+        txt = f"shape k {a[0]:.3f}, scale {a[2]:.2f} µm"
+    elif name == "Weibull":
+        txt = f"shape k {a[0]:.3f}, scale λ {a[2]:.2f} µm"
+    else:
+        txt = f"a {a[0]:.3g}, c {a[1]:.3g}, scale {a[3]:.3g} µm" + (" (≈ lognormal limit)" if a[0] > 100 else "")
+    mode = optimize.minimize_scalar(lambda r: -d.pdf(r), bounds=(1e-3, d.ppf(0.9)), method="bounded").x
+    mode = 0.0 if mode < 0.01 else mode          # shape < 1: density falls from r = 0
+    rr = np.geomspace(max(d.ppf(1e-9), 1e-6), d.ppf(1 - 1e-7), 200001)  # moments numerically (scipy overflows near the lognormal limit)
+    pdf = d.pdf(rr)
+    pdf /= trapezoid(pdf, rr)
+    mean = trapezoid(rr * pdf, rr)
+    sd = np.sqrt(trapezoid((rr - mean) ** 2 * pdf, rr))
+    return txt, mode, mean, trapezoid((rr - mean) ** 3 * pdf, rr) / sd ** 3
+
+
+def _wks(x, w, cdf_fn):
+    """Weighted Kolmogorov-Smirnov distance between the data and a fitted cdf."""
+    o = np.argsort(x)
+    xs, ws = x[o], w[o]
+    ecdf = np.cumsum(ws) / ws.sum()
+    F = cdf_fn(xs)
+    return float(np.max(np.maximum(np.abs(ecdf - F), np.abs(ecdf - ws / ws.sum() - F))))
+
+
+def pooled_sample(bubbles, m, rmin=5.0, exclude=None, weight="bubble", var="r_eq_um"):
+    """Radii (>= rmin) of every frame in m, minus the (run, train) pairs in exclude, with likelihood weights:
+    weight="bubble" counts every bubble once (busy frames dominate), "frame" gives every frame the same total weight,
+    "run" every run. Weights are scaled to sum to the number of bubbles, so AIC stays comparable."""
+    keep = m if not exclude else m[[(r, t) not in exclude for r, t in zip(m["run"], m["train"])]]
+    b = bubbles[bubbles["frame"].isin(keep["frame"]) & (bubbles[var] >= rmin)]
+    x = b[var].to_numpy(float)
+    if weight == "bubble":
+        w = np.ones(len(x))
+    else:
+        key = b["frame"] if weight == "frame" else b["run"]
+        w = 1.0 / key.map(key.value_counts()).to_numpy(float)
+    w *= len(x) / w.sum()
+    return b, x, w
+
+
+def fit_pooled(x, w, rmin=5.0, models=None):
+    """Fit every model in FIT_MODELS (or the names in models). Returns (table, fits) with AIC, ΔAIC, KS D,
+    readable parameters, mode, mean and skewness; fits[name] = (pdf, cdf) of the truncated fitted distribution."""
+    rows, fits = [], {}
+    for name in models or FIT_MODELS:
+        th, nll, pdf_fn, cdf_fn, d = _fit_one(name, x, w, rmin)
+        txt, mode, mean, skew = _describe(name, d)
+        k = FIT_MODELS[name][1] + 1
+        rows.append(dict(model=name, k=k, nll=nll, AIC=2 * k + 2 * nll, KS_D=_wks(x, w, cdf_fn),
+                         params=txt, mode_um=mode, mean_um=mean, skewness=skew))
+        fits[name] = (pdf_fn, cdf_fn)
+    t = pd.DataFrame(rows)
+    t["dAIC"] = t["AIC"] - t["AIC"].min()
+    t = t.sort_values("AIC").reset_index(drop=True)
+    return t[["model", "k", "dAIC", "KS_D", "params", "mode_um", "mean_um", "skewness", "AIC"]], fits
+
+
+def bootstrap_runs(b, rmin=5.0, model="lognormal", weight="bubble", n_boot=100, seed=0, var="r_eq_um"):
+    """Resample whole runs with replacement and refit: spread of the fitted parameters from run-to-run variation.
+    Returns a DataFrame with one row per resample (mode, mean, skewness and the raw parameters)."""
+    rng = np.random.default_rng(seed)
+    runs = np.array(sorted(b["run"].unique()))
+    groups = {r: g for r, g in b.groupby("run")}
+    out = []
+    for _ in range(n_boot):
+        g = pd.concat([groups[r] for r in rng.choice(runs, len(runs))], ignore_index=True)
+        x = g[var].to_numpy(float)
+        if weight == "bubble":
+            w = np.ones(len(x))
+        else:
+            key = (g["frame"] if weight == "frame" else g["run"]).to_numpy()
+            _, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+            w = 1.0 / cnt[inv]
+        w *= len(x) / w.sum()
+        th, nll, _, _, d = _fit_one(model, x, w, rmin)
+        _, mode, mean, skew = _describe(model, d)
+        out.append(dict(mode_um=mode, mean_um=mean, skewness=skew, **{f"theta{i}": v for i, v in enumerate(th)}))
+    return pd.DataFrame(out)
+
+
+def run_histograms(b, bins, var="r_eq_um", min_n=50, scaled=False):
+    """Density histogram per run on shared bins (runs with at least min_n bubbles). scaled: r / <r> of each frame."""
+    H = {}
+    for run, g in b.groupby("run"):
+        if len(g) < min_n:
+            continue
+        v = g[var] / g.groupby("frame")[var].transform("mean") if scaled else g[var]
+        H[run] = np.histogram(v, bins=bins, density=True)[0]
+    return pd.DataFrame(H, index=np.sqrt(bins[1:] * bins[:-1])).T
+
+
+# ----------------------------------------------------------------------------
 # Plots
 # ----------------------------------------------------------------------------
 def _mark_layers(ax, piv, layers, color=None):
@@ -604,6 +791,50 @@ def plot_scaled(centers, curves, layers=None, cv=None):
         ax.plot([], [], color=C[1], lw=1.8, label="layer / outlier trains")
         ax.plot([], [], color=C[0], lw=1.0, alpha=0.6, label="other trains")
         ax.legend(fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def plot_pooled(b, x, w, fits, table, rmin=5.0, var="r_eq_um", n_show=3):
+    """Pooled size distribution with the spread between runs and the best n_show fits.
+    Left: linear radius axis; middle: log-log (tail); right: r / <r> per frame (shape only, scale removed)."""
+    import matplotlib.pyplot as plt
+    bins = np.geomspace(rmin, np.quantile(x, 0.999) * 1.05, 36)
+    centers = np.sqrt(bins[1:] * bins[:-1])
+    hist = np.histogram(x, bins=bins, weights=w, density=True)[0]
+    H = run_histograms(b, bins, var)
+    sbins = np.geomspace(0.15, 8, 30)
+    S = run_histograms(b, sbins, var, scaled=True)
+    sc = np.sqrt(sbins[1:] * sbins[:-1])
+    rr = np.geomspace(rmin, bins[-1], 400)
+    names = table["model"].tolist()[:n_show]
+    fig, axs = plt.subplots(1, 3, figsize=(17, 4.6))
+    for ax, logy in zip(axs[:2], (False, True)):
+        if len(H) > 1:
+            ax.fill_between(centers, H.quantile(0.16), H.quantile(0.84), color=C[0], alpha=0.18, lw=0,
+                            label=f"16–84 % of runs (n = {len(H)})")
+        ax.plot(centers, hist, "o", color=C[0], ms=4, label=f"pooled ({len(x)} bubbles)")
+        for i, n in enumerate(names):
+            ax.plot(rr, fits[n][0](rr), "-", color=[INK, C[1], C[2], C[3]][i % 4], lw=1.6 if i == 0 else 1.1,
+                    label=f"{n} (ΔAIC {table.loc[table['model'] == n, 'dAIC'].iloc[0]:.0f})")
+        ax.set_xlabel("equivalent radius [µm]"); ax.set_ylabel("probability density [1/µm]")
+        if logy:
+            ax.set_xscale("log"); ax.set_yscale("log")
+            ax.set_ylim(max(hist[hist > 0].min() * 0.3, 1e-7), hist.max() * 3)
+            ax.set_title("Log-log (tail)", fontsize=10)
+        else:
+            ax.set_xlim(0, np.quantile(x, 0.99))
+            ax.set_title(f"Pooled size distribution (r ≥ {rmin:g} µm)", fontsize=10)
+            ax.legend(fontsize=8)
+    ax = axs[2]
+    if len(S) > 1:
+        for run, h in S.iterrows():
+            ax.plot(sc, h, "-", color=C[0], lw=0.8, alpha=0.3)
+        ax.plot(sc, S.median(), "-", color=INK, lw=2, label="median of runs")
+        ax.legend(fontsize=8)
+    ax.set_xscale("log"); bst._log_ticks(ax, [0.2, 0.3, 0.5, 1, 2, 3, 5])
+    ax.set_xlabel("r / ⟨r⟩ of its frame"); ax.set_ylabel("probability density")
+    ax.set_title("Shape only: one line per run", fontsize=10)
     fig.tight_layout()
     return fig
 
