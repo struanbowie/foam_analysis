@@ -117,7 +117,8 @@ def load_runs(run_dirs, frame_idx=10, reviewed_only=False, in_analysis_only=True
             print(f"skipped {d}: no {'reviewed ' if reviewed_only else ''}frame {frame_idx}")
             continue
         f = f.assign(run=[run_name(x, d) for x in f["frame"]], run_dir=d)
-        b = b.merge(f[["frame", "run", "run_dir"]], on="frame", how="inner")
+        b = b.drop(columns=[c for c in ("run", "run_dir") if c in b]).merge(f[["frame", "run", "run_dir"]],
+                                                                              on="frame", how="inner")
         bl.append(b)
         fl.append(f)
     if not fl:
@@ -193,7 +194,7 @@ def metrics(bubbles, frames, um_per_px=3.2, small_um=10.0, coverage=True):
             m = bst.frame_metrics(b, f, run_dir=None, um_per_px=um_per_px)
         ex = [extra_metrics(b[b["frame"] == fr], frames.set_index("frame").loc[fr], um_per_px, small_um)
               for fr in m["frame"]]
-        m = pd.concat([m, pd.DataFrame(ex)], axis=1)
+        m = pd.concat([m.drop(columns=[c for c in ("run",) if c in m]), pd.DataFrame(ex)], axis=1)
         m.insert(0, "run", run)
         rows.append(m)
     return pd.concat(rows, ignore_index=True).sort_values(["run", "t"]).reset_index(drop=True)
@@ -289,9 +290,9 @@ def layer_set(out_steps=None, known=None):
     layer trains ({run: [trains]})."""
     s = set()
     if out_steps is not None and len(out_steps):
-        s |= {(r.run, r.train_to) for r in out_steps.itertuples() if r.fresh}
+        s |= {(r.run, int(r.train_to)) for r in out_steps.itertuples() if r.fresh}
     if known:
-        s |= {(run, t) for run, ts in known.items() for t in ts}
+        s |= {(run, int(t)) for run, ts in known.items() for t in ts}
     return s
 
 
