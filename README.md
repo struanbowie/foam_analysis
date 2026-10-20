@@ -13,6 +13,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed circles / ellipses), `bubbles.csv`, `frames.csv`; any selection of frames, trains or runs |
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
 | 4c. Compare runs | `bubble_compare_runs.ipynb` | count, size, area, ... per train with several runs on one plot, aligned on the laser-scan train (bubble-count jump), also relative to before the scan; figures in `results/compare/` |
+| 4d. Run × train statistics | `bubble_runs_analysis.ipynb` | one frame number (default 10) of every train of every run in `results/`: run × train grids, trends, steps between trains (coalescence / dissolution / new layers), variance run vs train, distribution tests, spatial clustering, and a findings text box to paste back to Claude; saved in `results/_compare/frame<N>/` |
 | 4b. Analyse one train, every frame | `bubble_train_analysis.ipynb` | predicts all frames of train `N` into the run's folder, `results/<run>/tid<N>/`, time-series plots and an overlay GIF in `figures/` |
 
 Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
@@ -30,6 +31,9 @@ train) or `(["r571", "r572"], "all", 10)` (several runs); see `bubble_io.select_
   export and loading of results (with `run`, `train`, `frame_idx` columns), syncing reviewed frames into the training
   set. `polygons_to_ellipses(folder)` rewrites polygons saved by older versions as ellipses (they are read as
   ellipses anyway; unreviewed drafts are better predicted again with `OVERWRITE_UNREVIEWED = True`).
+* `bubble_compare.py`: loading several runs at one frame number, extra metrics (small-bubble share, nearest
+  neighbours, Clark-Evans index), step classification and jump (layer) detection, trends, variance partition,
+  distribution tests and the plots for `bubble_runs_analysis.ipynb`.
 * `bubble_stats.py`: per-frame metrics (count, density, mean/median/Sauter radius, coverage, volume proxy, shape,
   centroid) and the analysis plots.
 * `bubble_seg.py`: image preprocessing (background flattening, denoising, CLAHE, rim map), the model's input channels.
