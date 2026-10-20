@@ -98,7 +98,7 @@ def load_runs(run_dirs, frame_idx=10, reviewed_only=False, in_analysis_only=True
     train_times: None (t = train number), {train: t} for all runs, or {run: {train: t}}.
     Returns (bubbles, frames); both carry run, train, t, frame and run_dir.
     """
-    bl, fl = [], []
+    bl, fl, seen = [], [], {}
     for d in run_dirs:
         if export_missing:
             try:
@@ -116,6 +116,18 @@ def load_runs(run_dirs, frame_idx=10, reviewed_only=False, in_analysis_only=True
         if f.empty:
             print(f"skipped {d}: no {'reviewed ' if reviewed_only else ''}frame {frame_idx}")
             continue
+        # a frame name must be unique across runs (bubbles are matched to frames by name): skip frames already
+        # loaded from another folder (e.g. a copy or an older export of the same run) and repeated rows
+        dup = f["frame"].isin(list(seen)) | f["frame"].duplicated()
+        if dup.any():
+            src = sorted({seen[x] for x in f.loc[dup, "frame"] if x in seen})
+            print(f"WARNING {d}: skipped {int(dup.sum())} frame(s) already loaded"
+                  + (f" from {', '.join(src)}" if src else " (repeated rows in frames.csv)")
+                  + "; set RUNS to choose which folder to use")
+            f = f[~dup]
+            if f.empty:
+                continue
+        seen.update({x: d for x in f["frame"]})
         f = f.assign(run=[run_name(x, d) for x in f["frame"]], run_dir=d)
         b = b.drop(columns=[c for c in ("run", "run_dir") if c in b]).merge(f[["frame", "run", "run_dir"]],
                                                                               on="frame", how="inner")
@@ -187,12 +199,13 @@ def metrics(bubbles, frames, um_per_px=3.2, small_um=10.0, coverage=True):
     """One row per (run, train, frame): bubble_stats.frame_metrics + extra_metrics."""
     rows = []
     for (run, d), f in frames.groupby(["run", "run_dir"], sort=True):
-        b = bubbles[bubbles["run"] == run]
+        b = bubbles[(bubbles["run"] == run) & (bubbles["run_dir"] == d)]
+        fi = f.set_index("frame")
         try:
             m = bst.frame_metrics(b, f, run_dir=d if coverage else None, um_per_px=um_per_px)
         except FileNotFoundError:
             m = bst.frame_metrics(b, f, run_dir=None, um_per_px=um_per_px)
-        ex = [extra_metrics(b[b["frame"] == fr], frames.set_index("frame").loc[fr], um_per_px, small_um)
+        ex = [extra_metrics(b[b["frame"] == fr], fi.loc[fr], um_per_px, small_um)
               for fr in m["frame"]]
         m = pd.concat([m.drop(columns=[c for c in ("run",) if c in m]), pd.DataFrame(ex)], axis=1)
         m.insert(0, "run", run)
