@@ -11,6 +11,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | 2. Train the model | `bubble_training.ipynb` | `annotations/` (your napari annotations), `models/` (trained models) |
 | 3. Predict + review | `bubble_inference.ipynb` | `results/<run_name>/shapes/` (reviewed outlines), `bubbles.csv`, `frames.csv` |
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
+| 4c. Compare runs and trains | `bubble_runs_analysis.ipynb` | one frame number (default 10) of every train of every run in `results/`: run × train grids, trends, steps between trains (coalescence / dissolution / new layers), variance run vs train, distribution tests, spatial clustering, and a findings text box; saved in `results/_compare/frame<N>/` |
 | 4b. Analyse one train, every frame | `bubble_train_analysis.ipynb` | predicts all frames of train `N` into the run's folder, `results/<run>/tid<N>/`, tracks every bubble through the train (`tracked/`: identities, bridged missed frames, mergers / dissolution events), time-series and per-bubble plots, GIFs in `figures/` |
 
 Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
@@ -25,6 +26,9 @@ Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (F
 * `bubble_track.py`: tracking through the frames of one train. Links outlines by overlap (works for deformed
   bubbles), bridges up to 6 missed frames (the model's low-score detections, else a morphed outline), and classifies
   where bubbles merge, dissolve, appear or leave the view. Tracks, events and per-bubble plots.
+* `bubble_compare.py`: loading several runs at one frame number, extra metrics (small-bubble share, nearest
+  neighbours, Clark-Evans index), step classification and jump (layer) detection, trends, variance partition,
+  distribution tests and the comparison plots for `bubble_runs_analysis.ipynb`.
 * `bubble_stats.py`: per-frame metrics (count, density, mean/median/Sauter radius, coverage, volume proxy, shape,
   centroid) and the analysis plots.
 * `bubble_seg.py`: image preprocessing (background flattening, denoising, CLAHE, rim map), the model's input channels.
