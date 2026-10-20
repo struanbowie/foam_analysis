@@ -1,7 +1,7 @@
 {
   "created": "2026-10-10 16:55:36",
   "model_path": "/gpfs/exfel/u/usr/SPB/202501/p007699/Shared/sbowie/foam_analysis/models/bubble_rcnn_best.pt",
-  "updated": "2026-10-10 16:55:48",
+  "updated": "2026-10-20 15:27:43",
   "config": {
     "annotation_dir": "annotations",
     "model_dir": "models",
@@ -95,6 +95,13 @@
       "model": "bubble_rcnn_best.pt",
       "items": [
         "('r574', 'all', 10)"
+      ]
+    },
+    {
+      "at": "2026-10-20 15:27:43",
+      "model": "bubble_rcnn_best.pt",
+      "items": [
+        "('all', 'all', 10)"
       ]
     }
   ]
