@@ -70,6 +70,7 @@ class RCNNConfig:
     weight_decay: float = 1e-4
     warmup_iters: int = 200
     amp: bool = True                        # mixed precision on GPU
+    amp_dtype: str = "auto"                 # "auto": bfloat16 on A100/H100 (no loss scaling), float16 on older GPUs
     num_workers: int = 4
     val_every: int = 250
     seed: int = 0
@@ -537,7 +538,21 @@ def get_device(cfg: RCNNConfig):
                   "Fix: start the JupyterHub session on an A100/H100 node, or install a PyTorch build that "
                   "supports this GPU (see README).")
             return torch.device("cpu")
+        if major >= 8:
+            # A100/H100: TF32 for the fp32 matmuls (convolutions already use it), fixed-size inputs -> tuned kernels
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
     return device
+
+
+def amp_dtype(cfg: RCNNConfig, device):
+    """Autocast dtype for training: bfloat16 where the GPU supports it (A100/H100), else float16."""
+    import torch
+    if cfg.amp_dtype == "auto":
+        bf16 = device.type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8
+        return torch.bfloat16 if bf16 else torch.float16
+    return {"bfloat16": torch.bfloat16, "float16": torch.float16}[cfg.amp_dtype]
 
 
 def save_model(model, cfg: RCNNConfig, name="bubble_rcnn"):
@@ -591,7 +606,12 @@ def train(model, train_samples, val_samples, cfg: RCNNConfig, log_every=25, ckpt
         print(f"no validation set: {ckpt_name}_best.pt will be the same as {ckpt_name}_last.pt (not selected by F1)")
     torch.manual_seed(cfg.seed)
     use_amp = cfg.amp and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    dtype = amp_dtype(cfg, device)
+    # bfloat16 has the range of float32: no loss scaling needed
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp and dtype == torch.float16)
+    if device.type == "cuda":
+        print(f"training on {torch.cuda.get_device_name(device)}"
+              + (f", mixed precision {str(dtype)[6:]}" if use_amp else ", float32"))
     history, best_f1 = [], -1.0
     t0 = time.time()
     model.train()
@@ -600,7 +620,7 @@ def train(model, train_samples, val_samples, cfg: RCNNConfig, log_every=25, ckpt
             g["lr"] = lr_at(it)
         imgs = [i.to(device) for i in imgs]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        with torch.autocast(device_type=device.type, enabled=use_amp):
+        with torch.autocast(device_type=device.type, dtype=dtype, enabled=use_amp):
             losses = model(imgs, targets)
             loss = sum(losses.values())
         opt.zero_grad(set_to_none=True)

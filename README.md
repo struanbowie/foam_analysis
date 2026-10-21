@@ -72,5 +72,10 @@ If the capability (e.g. `(7, 0)` = V100, `(6, 0)` = P100) is missing from the ar
 "CUDA error: no kernel image is available for execution on the device". Either use an A100/H100 node, or install a
 PyTorch build that still supports older GPUs: `pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126`.
 
+On an H100 (sm_90) any current PyTorch wheel works (CUDA 12.x builds include sm_90; the arch list shows `sm_90`).
+On A100/H100 training uses bfloat16 mixed precision and TF32 automatically (`amp_dtype="auto"`; set
+`amp_dtype="float16"` in `RCNNConfig` to get the old behaviour). With 80 GB you can raise `batch_size` (e.g. 8, with
+`lr=0.02`) and `num_workers` up to the CPU cores of your session.
+
 Run the notebooks from the repository root (paths are relative to it) on a GPU JupyterHub session with the
 `foam (bubbles)` kernel.
