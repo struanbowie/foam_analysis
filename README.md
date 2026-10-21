@@ -14,6 +14,7 @@ Mask R-CNN that handles overlapping, nested and non-spherical bubbles, review it
 | 4. Analyse | `bubble_analysis.ipynb` | your analysis of `results/<run_name>/` |
 | 4c. Compare runs | `bubble_compare_runs.ipynb` | count, size, area, ... per train with several runs on one plot, aligned on the laser-scan train (bubble-count jump), also relative to before the scan; figures in `results/compare/` |
 | 4d. Run × train statistics | `bubble_runs_analysis.ipynb` | one frame number (default 10) of every train of every run in `results/`: run × train grids, trends, steps between trains (coalescence / dissolution / new layers), variance run vs train, distribution tests, spatial clustering, and a findings text box to paste back to Claude; saved in `results/_compare/frame<N>/` |
+| 4e. Run sets as one timeline | `bubble_run_sets.ipynb` | consecutive runs (a `results/<name>_set/` folder, or a list such as r562 → r563 → r564) as one timeline: count, size, coverage, area through every train of every run, jumps at run boundaries, each run relative to its first train, a findings text box; saved in `results/_sets/frame<N>/` |
 | 4b. Analyse one train, every frame | `bubble_train_analysis.ipynb` | predicts all frames of train `N` into the run's folder, `results/<run>/tid<N>/`, time-series plots and an overlay GIF in `figures/` |
 
 Annotation and review happen in napari: `python annotate_bubbles.py <folder>` (FastX desktop session on Maxwell).
@@ -34,6 +35,8 @@ train) or `(["r571", "r572"], "all", 10)` (several runs); see `bubble_io.select_
 * `bubble_compare.py`: loading several runs at one frame number, extra metrics (small-bubble share, nearest
   neighbours, Clark-Evans index), step classification and jump (layer) detection, trends, variance partition,
   distribution tests and the plots for `bubble_runs_analysis.ipynb`.
+* `bubble_sets.py`: run sets: discovery of `_set` folders, loading, timeline order (`seq`, `slot`, `t_min`),
+  run-boundary jumps and the timeline plots for `bubble_run_sets.ipynb`.
 * `bubble_stats.py`: per-frame metrics (count, density, mean/median/Sauter radius, coverage, volume proxy, shape,
   centroid) and the analysis plots.
 * `bubble_seg.py`: image preprocessing (background flattening, denoising, CLAHE, rim map), the model's input channels.
