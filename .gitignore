@@ -11,3 +11,5 @@ results/**/figures/*.gif
 # output of the removed bubble tracking (delete these folders; kept here so they are never committed)
 results/**/candidates/
 results/**/tracked/
+frames_*/
+frames_*.zip
