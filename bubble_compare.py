@@ -21,6 +21,7 @@ distribution tests (Kruskal-Wallis, KS, Wasserstein distances), scaled-distribut
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -75,11 +76,24 @@ def _needs_export(run_dir):
     return (not os.path.exists(p)) or os.path.getsize(p) < 10
 
 
+def _stale(run_dir):
+    """Shape files saved (e.g. corrected / reviewed in napari) after bubbles.csv was written."""
+    p = os.path.join(run_dir, "bubbles.csv")
+    if not os.path.exists(p):
+        return []
+    t = os.path.getmtime(p)
+    return [j for j in glob.glob(os.path.join(run_dir, "shapes", "*.json")) if os.path.getmtime(j) > t + 1]
+
+
 def ensure_exported(run_dir, include_unreviewed=True, force=False, verbose=True):
-    """Write bubbles.csv / frames.csv from the shape files if they are missing or empty (or force=True).
+    """Write bubbles.csv / frames.csv from the shape files if they are missing or empty, if any shape file was
+    saved after them (napari corrections / Reviewed ticks), or if force=True.
     Needs the frame .tif copies in shapes/ (present on Maxwell, not in git)."""
-    if not (force or _needs_export(run_dir)):
+    stale = _stale(run_dir)
+    if not (force or stale or _needs_export(run_dir)):
         return False
+    if stale and verbose:
+        print(f"{run_dir}: {len(stale)} frame(s) changed since the last export, exporting again")
     cfg = config_from_run_info(run_dir)
     bio.export_results(run_dir, cfg, include_unreviewed=include_unreviewed, verbose=verbose)
     return True
