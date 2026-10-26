@@ -3,31 +3,31 @@
 |                                                                                                             |
 | [Data]                                                                                                      |
 | - r560_set: runs r559 → r560 → r561, frame 10, 28 frames (r559 trains 0–12, r560 trains 0–6, r561 trains    |
-|   0–7), 2492 bubbles, 0 frames reviewed                                                                     |
+|   0–7), 2496 bubbles, 10 frames reviewed                                                                    |
 |                                                                                                             |
 | [Timeline]                                                                                                  |
-| - r560_set: count 3 (r559 t0) → 49 (r561 t7), ×16.33; max 218 at r561 t2, min 3 at r559 t0                  |
-| - r560_set: mean radius 14.8 → 14.5 µm (×0.98), r32 16.2 → 21.1 µm, coverage 0.00 → 0.03, total area ×18.39 |
-| - r560_set count by train: r559: 3 3 3 4 4 4 4 4 150 137 124 147 166 | r560: 150 140 130 203 163 102 78 |   |
-|   r561: 37 36 218 154 117 93 69 49                                                                          |
+| - r560_set: count 1 (r559 t0) → 49 (r561 t7), ×49.00; max 218 at r561 t2, min 1 at r559 t0                  |
+| - r560_set: mean radius 18.4 → 14.5 µm (×0.79), r32 18.4 → 21.1 µm, coverage 0.00 → 0.03, total area ×37.45 |
+| - r560_set count by train: r559: 1 1 2 1 1 1 1 1 169 137 124 147 166 | r560: 150 140 130 203 163 102 78 |   |
+|   r561: 37 36 218 154 117 93 74 49                                                                          |
 |                                                                                                             |
 | [Run boundaries]                                                                                            |
-| - r560_set r559 t12 → r560 t0: n_bubbles ×0.90 (z -0.3), r_mean_um ×1.00 (z -0.5), r32_um ×1.01 (z -0.0),   |
-|   coverage_frac ×0.93 (z -0.3), area_total_um2 ×0.91 (z -0.1)                                               |
-| - r560_set r560 t6 → r561 t0: n_bubbles ×0.47 (z -2.5 JUMP), r_mean_um ×1.35 (z +5.6 JUMP), r32_um ×1.09 (z |
-|   +1.2), coverage_frac ×0.80 (z -1.3), area_total_um2 ×0.79 (z -1.2)                                        |
-| - typical count step inside runs: ×1.19 (median |change| per train)                                         |
+| - r560_set r559 t12 → r560 t0: n_bubbles ×0.90 (z -0.1), r_mean_um ×1.00 (z -0.8), r32_um ×1.01 (z -0.0),   |
+|   coverage_frac ×0.93 (z -0.2), area_total_um2 ×0.91 (z -0.4)                                               |
+| - r560_set r560 t6 → r561 t0: n_bubbles ×0.47 (z -2.8 JUMP), r_mean_um ×1.35 (z +6.2 JUMP), r32_um ×1.09 (z |
+|   +0.9), coverage_frac ×0.80 (z -1.3), area_total_um2 ×0.79 (z -1.3)                                        |
+| - typical count step inside runs: ×1.25 (median |change| per train)                                         |
 |                                                                                                             |
 | [Runs within the set]                                                                                       |
-| - r560_set r559 (trains 0–12): count 3 → 166 (×55.33, mean 58), mean r 14.8 → 16.7 µm                       |
+| - r560_set r559 (trains 0–12): count 1 → 166 (×166.00, mean 58), mean r 18.4 → 16.7 µm                      |
 | - r560_set r560 (trains 0–6): count 150 → 78 (×0.52, mean 138), mean r 16.7 → 14.0 µm                       |
 | - r560_set r561 (trains 0–7): count 37 → 49 (×1.32, mean 97), mean r 18.8 → 14.5 µm                         |
 |                                                                                                             |
 | [Trends over the set]                                                                                       |
-| - r560_set n_bubbles: ρ = +0.47 (p = 0.012, significant), +14.5% per train                                  |
-| - r560_set r_mean_um: ρ = +0.06 (p = 0.75, not significant), +0.2% per train                                |
-| - r560_set r32_um: ρ = +0.47 (p = 0.011, significant), +1.8% per train                                      |
+| - r560_set n_bubbles: ρ = +0.44 (p = 0.021, significant), +20.5% per train                                  |
+| - r560_set r_mean_um: ρ = -0.49 (p = 0.0081, significant), -1.2% per train                                  |
+| - r560_set r32_um: ρ = +0.41 (p = 0.03, significant), +1.0% per train                                       |
 | - r560_set coverage_frac: ρ = +0.35 (p = 0.065, not significant), +0.00221 per train                        |
-| - r560_set area_total_um2: ρ = +0.30 (p = 0.11, not significant), +15.9% per train                          |
-| - r560_set frac_small: ρ = +0.25 (p = 0.21, not significant), +0.00495 per train                            |
+| - r560_set area_total_um2: ρ = +0.30 (p = 0.12, not significant), +18.8% per train                          |
+| - r560_set frac_small: ρ = +0.64 (p = 0.00026, significant), +0.0177 per train                              |
 ===============================================================================================================
