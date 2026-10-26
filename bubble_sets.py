@@ -6,7 +6,7 @@ A set is either a results folder named `<name>_set` (written by bubble_inference
 the frame names inside, in run-number order) or an explicit list of runs, {"name": ["r562", "r563", "r564"]}.
 
 timeline() gives every frame its position `seq` (0, 1, 2, ... through all runs and trains) and, when train and
-run intervals are known, a time `t_min` since the first train of the set.
+run start times are known, a time `t_s` (seconds) since the first train of the set.
 """
 from __future__ import annotations
 
@@ -77,15 +77,32 @@ def load_sets(run_sets, results_root="results", frame_idx=10, reviewed_only=Fals
     return pd.concat(bl, ignore_index=True), pd.concat(fl, ignore_index=True)
 
 
-def timeline(frames, run_sets, train_minutes=None, run_gap_minutes=None, run_trains=None):
-    """Order of every frame within its set: runs in the listed order, trains in order within a run.
+def run_starts(runs, n_trains, train_seconds=15.0, run_start_s=None, run_gap_s=120.0):
+    """Start time (s) of train 0 of every run, relative to train 0 of the first run.
+    run_start_s: {run: seconds} set by hand (any subset; the first run defaults to 0). Runs without a value start
+    run_gap_s after the last train of the previous run (n_trains[prev] - 1 intervals after its start)."""
+    run_start_s = run_start_s or {}
+    out = {}
+    for i, r in enumerate(runs):
+        if r in run_start_s:
+            out[r] = float(run_start_s[r])
+        elif i == 0:
+            out[r] = 0.0
+        else:
+            prev = runs[i - 1]
+            out[r] = out[prev] + (n_trains[prev] - 1) * train_seconds + run_gap_s
+    return out
+
+
+def timeline(frames, run_sets, train_seconds=15.0, run_start_s=None, run_gap_s=120.0, run_trains=None):
+    """Order and time of every frame within its set: runs in the listed order, trains in order within a run.
 
     seq       0, 1, 2, ... through the whole set (missing trains leave no gap; use `slot` for that)
     slot      position counting every train of every run, including trains with no frame, from run_trains
               ({run: number of trains}; default: highest train found + 1)
-    t_min     minutes since train 0 of the first run, if train_minutes (interval between trains) is given;
-              run_gap_minutes is the extra time between the last train of a run and train 0 of the next
-              (default: one train interval). Either may be a dict per run (run_gap_minutes: gap BEFORE that run).
+    t_s       seconds since train 0 of the first run: run start (run_starts) + train * train_seconds
+    t_run_s   seconds since train 0 of the frame's own run
+    run_start_s may be {run: s} for one set, or {set: {run: s}} for several.
     """
     out = []
     for name, runs in run_sets.items():
@@ -98,34 +115,27 @@ def timeline(frames, run_sets, train_minutes=None, run_gap_minutes=None, run_tra
         f["seq"] = np.arange(len(f))
         n_tr = {r: (run_trains or {}).get(r, int(f.loc[f["run"] == r, "train"].max()) + 1 if (f["run"] == r).any() else 0)
                 for r in runs}
-        start, start_t, t0 = {}, {}, 0.0
-        s = 0
-        for i, r in enumerate(runs):
+        start, s = {}, 0
+        for r in runs:
             start[r] = s
             s += n_tr[r]
-            if train_minutes is not None:
-                dt = train_minutes.get(r) if isinstance(train_minutes, dict) else train_minutes
-                if i > 0:
-                    prev = runs[i - 1]
-                    dprev = train_minutes.get(prev) if isinstance(train_minutes, dict) else train_minutes
-                    gap = (run_gap_minutes.get(r) if isinstance(run_gap_minutes, dict) else run_gap_minutes)
-                    t0 = start_t[prev] + (n_tr[prev] - 1) * dprev + (gap if gap is not None else dprev)
-                start_t[r] = t0
         f["slot"] = [start[r] + t for r, t in zip(f["run"], f["train"])]
-        if train_minutes is not None:
-            f["t_min"] = [start_t[r] + t * (train_minutes.get(r) if isinstance(train_minutes, dict) else train_minutes)
-                          for r, t in zip(f["run"], f["train"])]
+        rs = run_start_s or {}
+        rs = rs.get(name, {}) if rs and isinstance(next(iter(rs.values())), dict) else rs
+        t0 = run_starts(runs, n_tr, train_seconds, rs, run_gap_s)
+        f["t_run_s"] = f["train"].astype(float) * train_seconds
+        f["t_s"] = f["run"].map(t0) + f["t_run_s"]
         out.append(f)
     return pd.concat(out, ignore_index=True)
 
 
 def set_metrics(bubbles, frames_tl, um_per_px=3.2, small_um=10.0):
-    """bubble_compare.metrics for every frame, with set / seq / slot / t_min attached."""
+    """bubble_compare.metrics for every frame, with set / seq / slot / t_s / t_run_s attached."""
     rows = []
     for name, f in frames_tl.groupby("set", sort=False):
         b = bubbles[bubbles["set"] == name]
         m = bc.metrics(b, f.assign(t=f["train"].astype(float)), um_per_px=um_per_px, small_um=small_um)
-        keep = [c for c in ("frame", "set", "seq", "slot", "t_min", "run_pos") if c in f]
+        keep = [c for c in ("frame", "set", "seq", "slot", "t_s", "t_run_s", "run_pos") if c in f]
         m = m.merge(f[keep], on="frame", how="left")
         rows.append(m)
     return pd.concat(rows, ignore_index=True).sort_values(["set", "seq"]).reset_index(drop=True)
@@ -153,6 +163,7 @@ def boundaries(m, cols=("n_bubbles", "r_mean_um", "r32_um", "coverage_frac", "ar
             for i in np.where(~same)[0]:
                 rows.append(dict(set=name, metric=c, from_run=g.loc[i, "run"], from_train=int(g.loc[i, "train"]),
                                  to_run=g.loc[i + 1, "run"], to_train=int(g.loc[i + 1, "train"]),
+                                 gap_s=g.loc[i + 1, "t_s"] - g.loc[i, "t_s"] if "t_s" in g else np.nan,
                                  before=v[i], after=v[i + 1], ratio=float(np.exp(lr[i])),
                                  typical_step=float(np.exp(np.median(np.abs(inside)))) if len(inside) else np.nan,
                                  z=float((lr[i] - med) / mad) if np.isfinite(mad) and mad else np.nan))
@@ -195,10 +206,13 @@ def _xcol(m, x):
     return x if x in m and m[x].notna().all() else "seq"
 
 
-def plot_timeline(m, col, ylabel, ax=None, x="seq", colors=None, title=None, annotate=False, logy=False):
+XLABEL = {"seq": "train (runs in order)", "slot": "train (runs in order)", "t_s": "time since train 0 of the first run [s]"}
+
+
+def plot_timeline(m, col, ylabel, ax=None, x="seq", colors=None, title=None, annotate=False, logy=False, fits=None):
     """One metric through a whole set: one line through every train of every run, markers in the run's colour,
     dashed lines at run boundaries with the run names on top. x: "seq" (frame order), "slot" (gaps for missing
-    trains) or "t_min" (real time)."""
+    trains) or "t_s" (timestamps). fits: decay-fit table from fit_decays (drawn for its metric only)."""
     import matplotlib.pyplot as plt
     ax = ax or plt.subplots(figsize=(12, 3.8))[1]
     x = _xcol(m, x)
@@ -221,11 +235,11 @@ def plot_timeline(m, col, ylabel, ax=None, x="seq", colors=None, title=None, ann
             ax.axvline((prev_hi + lo) / 2, color=INK2, lw=0.9, ls="--", zorder=1)
         ax.text((lo + hi) / 2, 1.01, run, transform=ax.get_xaxis_transform(), ha="center", va="bottom",
                 fontsize=9, color=colors[run], fontweight="bold")
+    if fits is not None and len(fits):
+        _draw_fits(ax, g, fits[fits["metric"] == col], x, colors)
     if x in ("seq", "slot"):
         ax.set_xticks(xs, [str(int(t)) for t in g["train"]], fontsize=8)
-        ax.set_xlabel("train (runs in order)")
-    else:
-        ax.set_xlabel("time since the first train [min]")
+    ax.set_xlabel(XLABEL.get(x, x))
     if logy:
         ax.set_yscale("log")
     else:
@@ -236,7 +250,7 @@ def plot_timeline(m, col, ylabel, ax=None, x="seq", colors=None, title=None, ann
     return ax
 
 
-def plot_timelines(m, specs, x="seq", annotate_first=True):
+def plot_timelines(m, specs, x="seq", annotate_first=True, fits=None):
     """Small multiples: one row per metric (specs: [(column, label)]), one column per set."""
     import matplotlib.pyplot as plt
     sets = list(dict.fromkeys(m["set"]))
@@ -247,7 +261,8 @@ def plot_timelines(m, specs, x="seq", annotate_first=True):
         g = m[m["set"] == s]
         for i, (col, label) in enumerate(specs):
             plot_timeline(g, col, label, ax=axs[i, j], x=x, colors=colors,
-                          title=s if i == 0 else None, annotate=annotate_first and i == 0)
+                          title=s if i == 0 else None, annotate=annotate_first and i == 0,
+                          fits=fits[fits["set"] == s] if fits is not None and len(fits) else None)
             if i < len(specs) - 1:
                 axs[i, j].set_xlabel("")
     fig.tight_layout()
@@ -265,41 +280,184 @@ def plot_relative_runs(m, col, ylabel, x_within="train"):
         for run, g in m[m["set"] == s].sort_values("seq").groupby("run", sort=False):
             ax.plot(g[x_within], g[col] / g[col].iloc[0], "-o", color=colors[run], ms=5, mec="white", label=run)
         ax.axhline(1, color=INK2, lw=0.8, ls=":")
-        ax.set_xlabel("train within the run"); ax.set_ylabel(f"{ylabel} ÷ first train")
+        ax.set_xlabel({"train": "train within the run", "t_run_s": "time since train 0 of the run [s]"}.get(x_within, x_within))
+        ax.set_ylabel(f"{ylabel} ÷ first train")
         ax.set_title(s, fontsize=10); ax.legend(fontsize=8)
     fig.tight_layout()
     return fig
 
 
-def plot_size_timeline(bubbles, m, var="r_eq_um", label="equivalent radius [µm]"):
-    """Size distribution of every frame of each set as one column, in timeline order, with the median and run
-    boundaries."""
+def plot_size_timeline(bubbles, m, var="r_eq_um", label="equivalent radius [µm]", x="seq", width=None):
+    """Size distribution of every frame of each set as one column (x = "seq": one column per train; x = "t_s":
+    at its timestamp, `width` seconds wide, default the smallest spacing), with the median and run boundaries."""
     import matplotlib.pyplot as plt
     import bubble_stats as bst
+    x = _xcol(m, x)
     sets = list(dict.fromkeys(m["set"]))
     bins = bst.log_bins(bubbles[var], n=30)
     fig, axs = plt.subplots(len(sets), 1, figsize=(max(9, 0.4 * m.groupby("set").size().max() + 3), 3.6 * len(sets)),
                             squeeze=False)
     for ax, s in zip(axs[:, 0], sets):
         g = m[m["set"] == s].sort_values("seq")
+        xc = np.arange(len(g), dtype=float) if x == "seq" else g[x].to_numpy(float)
+        w = 1.0 if x == "seq" else (width or (np.min(np.diff(xc)) if len(xc) > 1 else 1.0))
         H = np.array([np.histogram(bubbles.loc[bubbles["frame"] == f, var], bins=bins)[0] for f in g["frame"]], float)
         H /= np.maximum(H.sum(axis=1, keepdims=True), 1)
-        xe = np.arange(len(g) + 1) - 0.5
-        pc = ax.pcolormesh(xe, bins, H.T, cmap="Blues", shading="flat")
-        ax.plot(np.arange(len(g)), [bubbles.loc[bubbles["frame"] == f, var].median() for f in g["frame"]],
-                color=C[1], lw=1.5, label="median")
+        vmax = H.max() if H.size else 1
+        for k in range(len(g)):
+            pc = ax.pcolormesh([xc[k] - w / 2, xc[k] + w / 2], bins, H[k][:, None], cmap="Blues", vmin=0, vmax=vmax,
+                               shading="flat")
         runs = g["run"].to_numpy()
-        for i in np.where(runs[1:] != runs[:-1])[0]:
-            ax.axvline(i + 0.5, color=INK, lw=1, ls="--")
+        med = [bubbles.loc[bubbles["frame"] == f, var].median() for f in g["frame"]]
         for run in dict.fromkeys(runs):
             idx = np.where(runs == run)[0]
-            ax.text(idx.mean(), 1.01, run, transform=ax.get_xaxis_transform(), ha="center", fontsize=9, fontweight="bold")
+            ax.plot(xc[idx], np.asarray(med)[idx], color=C[1], lw=1.5, label="median" if idx[0] == 0 else None)
+            ax.text(xc[idx].mean(), 1.01, run, transform=ax.get_xaxis_transform(), ha="center", fontsize=9, fontweight="bold")
+        for i in np.where(runs[1:] != runs[:-1])[0]:
+            ax.axvline((xc[i] + xc[i + 1]) / 2, color=INK, lw=1, ls="--")
         ax.set_yscale("log")
         bst._log_ticks(ax, [v for v in (2, 3, 5, 10, 20, 30, 50, 100, 200) if bins[0] <= v <= bins[-1]], axis="y")
-        ax.set_xticks(np.arange(len(g)), [str(int(t)) for t in g["train"]], fontsize=8)
-        ax.set_xlabel("train (runs in order)"); ax.set_ylabel(label); ax.grid(False)
+        if x in ("seq", "slot"):
+            ax.set_xticks(xc, [str(int(t)) for t in g["train"]], fontsize=8)
+        ax.set_xlim(xc.min() - w, xc.max() + w)
+        ax.set_xlabel(XLABEL.get(x, x)); ax.set_ylabel(label); ax.grid(False)
         ax.legend(loc="upper right", fontsize=8)
         fig.colorbar(pc, ax=ax, label="fraction of the frame's bubbles")
         ax.set_title(f"{s}: size distribution through the set", fontsize=10, pad=16)
     fig.tight_layout()
     return fig
+
+
+# ----------------------------------------------------------------------------
+# Exponential decay of the bubble count after each scan
+# ----------------------------------------------------------------------------
+def _decay_ranges(spec):
+    """{run: (first, last)} or {run: [(first, last), ...]} or [(run, first, last), ...] -> [(run, first, last)]."""
+    if not spec:
+        return []
+    if isinstance(spec, dict):
+        out = []
+        for run, v in spec.items():
+            for lo, hi in ([v] if np.ndim(v) == 1 and len(v) == 2 and not isinstance(v[0], (list, tuple)) else v):
+                out.append((run, int(lo), int(hi)))
+        return out
+    return [(r, int(lo), int(hi)) for r, lo, hi in spec]
+
+
+def decay_model(t, n0, tau, n_inf=0.0):
+    """N(t) = N_inf + (N0 - N_inf) exp(-t / tau), t from the first train of the fit range."""
+    return n_inf + (n0 - n_inf) * np.exp(-t / tau)
+
+
+def fit_decays(m, ranges, col="n_bubbles", offset=False, set_name=None):
+    """Fit one exponential decay per range: ranges as in _decay_ranges, e.g. {"r561": (4, 9)} = trains 4..9 of
+    r561 (inclusive). Time is the timestamp t_s, measured from the first train of the range.
+    offset=False: N = N0 exp(-t/τ) (2 parameters; robust with 4-6 points).
+    offset=True:  N = N∞ + (N0 - N∞) exp(-t/τ) (3 parameters; needs the curve to level off within the range).
+    Returns one row per range: N0, τ [s] ± s.e., half-life, N∞, R², number of points, and the rate 1/τ."""
+    from scipy.optimize import curve_fit
+    rows = []
+    g_all = m if set_name is None else m[m["set"] == set_name]
+    for run, lo, hi in _decay_ranges(ranges):
+        g = g_all[(g_all["run"] == run) & g_all["train"].between(lo, hi)].sort_values("t_s")
+        g = g.dropna(subset=[col])
+        row = dict(set=g["set"].iloc[0] if len(g) else set_name, run=run, metric=col, first_train=lo, last_train=hi,
+                   n_points=len(g), offset=offset)
+        need = 4 if offset else 3
+        if len(g) < need:
+            rows.append(dict(row, note=f"only {len(g)} points (need {need})"))
+            continue
+        t = (g["t_s"] - g["t_s"].iloc[0]).to_numpy(float)
+        y = g[col].to_numpy(float)
+        # start values from a log-linear fit
+        pos = y > 0
+        sl = np.polyfit(t[pos], np.log(y[pos]), 1)[0] if pos.sum() >= 2 else -1 / max(t[-1], 1)
+        tau0 = -1 / sl if sl < 0 else max(t[-1], 1.0) * 2
+        try:
+            if offset:
+                p0 = [y[0], tau0, max(y.min() * 0.8, 0)]
+                popt, pcov = curve_fit(decay_model, t, y, p0=p0, bounds=([0, 1e-3, 0], [np.inf, 1e6, np.inf]), maxfev=20000)
+            else:
+                popt, pcov = curve_fit(lambda tt, n0, tau: decay_model(tt, n0, tau), t, y, p0=[y[0], tau0],
+                                       bounds=([0, 1e-3], [np.inf, 1e6]), maxfev=20000)
+            perr = np.sqrt(np.diag(pcov))
+        except (RuntimeError, ValueError) as e:
+            rows.append(dict(row, note=f"fit failed: {e}"))
+            continue
+        pred = decay_model(t, *popt)
+        ss_res, ss_tot = ((y - pred) ** 2).sum(), ((y - y.mean()) ** 2).sum()
+        tau, tau_se = popt[1], perr[1]
+        note = ""
+        if tau >= 0.99e6 or tau > 20 * max(t[-1], 1.0):
+            note = "no decay in this range (τ ≫ the range)"
+        elif not np.isfinite(tau_se) or tau_se > 0.5 * tau:
+            note = "τ poorly determined (s.e. > 50 %)"
+        rows.append(dict(row, t0_s=g["t_s"].iloc[0], t_end_s=g["t_s"].iloc[-1], N0=popt[0], N0_se=perr[0],
+                         tau_s=tau, tau_se=tau_se, half_life_s=tau * np.log(2), rate_per_min=60 / tau,
+                         N_inf=popt[2] if offset else 0.0, N_inf_se=perr[2] if offset else np.nan,
+                         r2=1 - ss_res / ss_tot if ss_tot > 0 else np.nan,
+                         rmse=float(np.sqrt(ss_res / len(y))), note=note))
+    return pd.DataFrame(rows)
+
+
+def _draw_fits(ax, g, fits, x, colors):
+    """Fitted decay curves on a timeline axes (x = t_s directly; x = seq / slot by interpolating time to position)."""
+    for f in fits.itertuples():
+        if not np.isfinite(getattr(f, "tau_s", np.nan)):
+            continue
+        tt = np.linspace(0, f.t_end_s - f.t0_s, 60)
+        yy = decay_model(tt, f.N0, f.tau_s, f.N_inf)
+        r = g[(g["run"] == f.run) & g["train"].between(f.first_train, f.last_train)].sort_values("t_s")
+        if r.empty:
+            continue
+        xx = tt + f.t0_s if x == "t_s" else np.interp(tt + f.t0_s, r["t_s"], r[x])
+        ax.plot(xx, yy, "-", color=colors.get(f.run, INK), lw=2.2, alpha=0.6, zorder=4)
+        ax.annotate(f"τ = {f.tau_s:.0f} s" if not f.note else "no clear decay", (xx[len(xx) // 2], yy[len(yy) // 2]), xytext=(4, 8),
+                    textcoords="offset points", fontsize=8, color=colors.get(f.run, INK), fontweight="bold")
+
+
+def plot_decays(m, fits, col="n_bubbles", ylabel="bubble count"):
+    """All fitted ranges on one axes against the time since the start of each range: data, fit, τ in the legend.
+    Left: linear y; right: log y (a straight line = a pure exponential)."""
+    import matplotlib.pyplot as plt
+    colors = bc.run_colors(m["run"].unique())
+    fig, axs = plt.subplots(1, 2, figsize=(13, 4.2))
+    for ax, logy in zip(axs, (False, True)):
+        for f in fits.itertuples():
+            if not np.isfinite(getattr(f, "tau_s", np.nan)):
+                continue
+            g = m[(m["set"] == f.set) & (m["run"] == f.run) & m["train"].between(f.first_train, f.last_train)].sort_values("t_s")
+            t = g["t_s"] - f.t0_s
+            c = colors.get(f.run, INK)
+            ax.plot(t, g[col], "o", color=c, ms=7, mec="white", mew=1.2, zorder=3)
+            tt = np.linspace(0, t.max(), 80)
+            ax.plot(tt, decay_model(tt, f.N0, f.tau_s, f.N_inf), "--" if f.note else "-", color=c, lw=2,
+                    label=f"{f.run} t{f.first_train}–{f.last_train}: " +
+                          (f"τ = {f.tau_s:.0f} ± {f.tau_se:.0f} s" if not f.note else f.note))
+        ax.set_xlabel("time since the first train of the fit range [s]")
+        ax.set_ylabel(ylabel)
+        if logy:
+            ax.set_yscale("log"); ax.set_title("log scale (straight line = exponential)", fontsize=10)
+        else:
+            ax.set_ylim(bottom=0); ax.set_title("Exponential decay after each scan", fontsize=10)
+            ax.legend(fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def compare_taus(fits):
+    """Are the decay times of the runs the same? Weighted mean τ, χ² test of equality (uses the fit s.e.),
+    and the largest / smallest ratio."""
+    from scipy import stats
+    if "tau_s" not in fits:
+        return None
+    f = fits.dropna(subset=["tau_s", "tau_se"])
+    f = f[(f["tau_se"] > 0) & (f["note"].fillna("") == "")]          # well-determined fits only
+    if len(f) < 2:
+        return None
+    w = 1 / f["tau_se"] ** 2
+    mean = (w * f["tau_s"]).sum() / w.sum()
+    chi2 = (w * (f["tau_s"] - mean) ** 2).sum()
+    dof = len(f) - 1
+    return dict(n=len(f), runs=", ".join(f["run"]), tau_weighted_mean=mean, tau_mean_se=np.sqrt(1 / w.sum()), chi2=chi2, dof=dof,
+                p_equal=stats.chi2.sf(chi2, dof), ratio_max_min=f["tau_s"].max() / f["tau_s"].min())
