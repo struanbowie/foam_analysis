@@ -5,7 +5,7 @@ r562_svd_normalised_tr050_tid2_010,r562,2,10,True,9,9,250,400,bubble_rcnn_best.p
 r562_svd_normalised_tr050_tid3_010,r562,3,10,True,8,8,250,400,bubble_rcnn_best.pt,ba8e18fdfe18e907
 r562_svd_normalised_tr050_tid4_010,r562,4,10,True,16,16,250,400,bubble_rcnn_best.pt,68d6488f225d3496
 r562_svd_normalised_tr050_tid5_010,r562,5,10,True,710,710,250,400,bubble_rcnn_best.pt,cee312d4e76cafd3
-r562_svd_normalised_tr050_tid6_010,r562,6,10,False,467,467,250,400,bubble_rcnn_best.pt,572c1f95a47c8162
+r562_svd_normalised_tr050_tid6_010,r562,6,10,False,497,497,250,400,bubble_rcnn_best.pt,bd6addea4469d297
 r562_svd_normalised_tr050_tid7_010,r562,7,10,False,411,411,250,400,bubble_rcnn_best.pt,228a67a6dc92ce5d
 r562_svd_normalised_tr050_tid8_010,r562,8,10,False,372,372,250,400,bubble_rcnn_best.pt,4e77e4d7463b1f04
 r563_svd_normalised_tr050_tid0_010,r563,0,10,False,301,301,250,400,bubble_rcnn_best.pt,b610813654fdda39
