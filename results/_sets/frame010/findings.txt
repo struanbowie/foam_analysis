@@ -1,33 +1,46 @@
-===============================================================================================================
-| RUN SETS TIMELINE, frame 10 | sets r560_set | x = seq | incl. unreviewed predictions                        |
-|                                                                                                             |
-| [Data]                                                                                                      |
-| - r560_set: runs r559 → r560 → r561, frame 10, 28 frames (r559 trains 0–12, r560 trains 0–6, r561 trains    |
-|   0–7), 2496 bubbles, 10 frames reviewed                                                                    |
-|                                                                                                             |
-| [Timeline]                                                                                                  |
-| - r560_set: count 1 (r559 t0) → 49 (r561 t7), ×49.00; max 218 at r561 t2, min 1 at r559 t0                  |
-| - r560_set: mean radius 18.4 → 14.5 µm (×0.79), r32 18.4 → 21.1 µm, coverage 0.00 → 0.03, total area ×37.45 |
-| - r560_set count by train: r559: 1 1 2 1 1 1 1 1 169 137 124 147 166 | r560: 150 140 130 203 163 102 78 |   |
-|   r561: 37 36 218 154 117 93 74 49                                                                          |
-|                                                                                                             |
-| [Run boundaries]                                                                                            |
-| - r560_set r559 t12 → r560 t0: n_bubbles ×0.90 (z -0.1), r_mean_um ×1.00 (z -0.8), r32_um ×1.01 (z -0.0),   |
-|   coverage_frac ×0.93 (z -0.2), area_total_um2 ×0.91 (z -0.4)                                               |
-| - r560_set r560 t6 → r561 t0: n_bubbles ×0.47 (z -2.8 JUMP), r_mean_um ×1.35 (z +6.2 JUMP), r32_um ×1.09 (z |
-|   +0.9), coverage_frac ×0.80 (z -1.3), area_total_um2 ×0.79 (z -1.3)                                        |
-| - typical count step inside runs: ×1.25 (median |change| per train)                                         |
-|                                                                                                             |
-| [Runs within the set]                                                                                       |
-| - r560_set r559 (trains 0–12): count 1 → 166 (×166.00, mean 58), mean r 18.4 → 16.7 µm                      |
-| - r560_set r560 (trains 0–6): count 150 → 78 (×0.52, mean 138), mean r 16.7 → 14.0 µm                       |
-| - r560_set r561 (trains 0–7): count 37 → 49 (×1.32, mean 97), mean r 18.8 → 14.5 µm                         |
-|                                                                                                             |
-| [Trends over the set]                                                                                       |
-| - r560_set n_bubbles: ρ = +0.44 (p = 0.021, significant), +20.5% per train                                  |
-| - r560_set r_mean_um: ρ = -0.49 (p = 0.0081, significant), -1.2% per train                                  |
-| - r560_set r32_um: ρ = +0.41 (p = 0.03, significant), +1.0% per train                                       |
-| - r560_set coverage_frac: ρ = +0.35 (p = 0.065, not significant), +0.00221 per train                        |
-| - r560_set area_total_um2: ρ = +0.30 (p = 0.12, not significant), +18.8% per train                          |
-| - r560_set frac_small: ρ = +0.64 (p = 0.00026, significant), +0.0177 per train                              |
-===============================================================================================================
+====================================================================================================================================================
+| RUN SETS TIMELINE, frame 10 | sets r563_set | trains 15 s apart, run starts {'r562': 0, 'r563': 149, 'r564': 286} | incl. unreviewed predictions |
+|                                                                                                                                                  |
+| [Data]                                                                                                                                           |
+| - r563_set: runs r562 → r563 → r564, frame 10, 24 frames (r562 trains 0–8, r563 trains 0–7, r564 trains                                          |
+|   0–6), 6805 bubbles, 5 frames reviewed                                                                                                          |
+|                                                                                                                                                  |
+| [Timeline]                                                                                                                                       |
+| - r563_set: spans 376 s; count 13 (r562 t0) → 272 (r564 t6), ×20.92; max 710 at r562 t5, min 8 at r562 t3                                        |
+| - r563_set: mean radius 18.8 → 18.1 µm (×0.96), r32 34.2 → 34.1 µm, coverage 0.01 → 0.25, total area ×18.47                                      |
+| - r563_set count by train: r562: 13 15 9 8 16 710 497 411 372 | r563: 301 294 280 250 478 406 347 320 |                                          |
+|   r564: 259 243 222 421 359 302 272                                                                                                              |
+|                                                                                                                                                  |
+| [Decay fits]                                                                                                                                     |
+| - r563_set r562 t5 → r563 t3 (8 pts): N0 = 701, τ = 27 ± 3 s (half-life 19 s), N∞ = 267 ± 13, R² = 0.990                                         |
+| - r563_set r563 t4 → r564 t2 (7 pts): N0 = 476, τ = 56 ± 6 s (half-life 38 s), N∞ = 184 ± 13, R² = 0.998                                         |
+| - r563_set r564 t3–6 (4 pts): N0 = 422, τ = 49 ± 20 s (half-life 34 s), N∞ = 169 ± 67, R² = 0.997                                                |
+| - r563_set (r562, r563, r564): weighted mean τ = 34 ± 3 s; longest/shortest τ = 2.02; same τ in all runs? χ²                                     |
+|   = 18.7 (dof 2), p = 8.6e-05 → τ differs between runs                                                                                           |
+|                                                                                                                                                  |
+| [Linear fits]                                                                                                                                    |
+| - r563_set r_mean_um r562 t5 → r563 t3 (8 pts): 14.74 at start, slope +3.458 ± 0.610 /min (+23.5% per min),                                      |
+|   R² = 0.843, p = 0.0013                                                                                                                         |
+| - r563_set r_mean_um r563 t4 → r564 t2 (7 pts): 15.59 at start, slope +3.030 ± 0.164 /min (+19.4% per min),                                      |
+|   R² = 0.986, p = 8.5e-06                                                                                                                        |
+| - r563_set r_mean_um r564 t3–6 (4 pts): 14.64 at start, slope +5.033 ± 0.773 /min (+34.4% per min), R² =                                         |
+|   0.955, p = 0.023                                                                                                                               |
+|                                                                                                                                                  |
+| [Run boundaries]                                                                                                                                 |
+| - r563_set r562 t8 → r563 t0: gap 29 s, n_bubbles ×0.81 (z -1.2), r_mean_um ×1.08 (z +0.6), r32_um ×1.02 (z                                      |
+|   +0.5), coverage_frac ×0.94 (z -1.1), area_total_um2 ×0.92 (z -1.3)                                                                             |
+| - r563_set r563 t7 → r564 t0: gap 32 s, n_bubbles ×0.81 (z -1.2), r_mean_um ×1.08 (z +0.5), r32_um ×1.08 (z                                      |
+|   +2.6 JUMP), coverage_frac ×0.95 (z -0.8), area_total_um2 ×0.95 (z -0.5)                                                                        |
+| - typical count step inside runs: ×1.17 (median |change| per train)                                                                              |
+|                                                                                                                                                  |
+| [Runs within the set]                                                                                                                            |
+| - r563_set r562 (trains 0–8): count 13 → 372 (×28.62, mean 228), mean r 18.8 → 18.4 µm                                                           |
+| - r563_set r563 (trains 0–7): count 301 → 320 (×1.06, mean 334), mean r 19.9 → 17.8 µm                                                           |
+| - r563_set r564 (trains 0–6): count 259 → 272 (×1.05, mean 297), mean r 19.2 → 18.1 µm                                                           |
+|                                                                                                                                                  |
+| [Trends over the set]                                                                                                                            |
+| - r563_set n_bubbles vs train: ρ = +0.28 (p = 0.19, not significant), +13.4% per train                                                           |
+| - r563_set r_mean_um vs train: ρ = -0.08 (p = 0.72, not significant), -0.1% per train                                                            |
+| - r563_set n_bubbles vs minute: ρ = +0.28 (p = 0.19, not significant), +55.4% per minute                                                         |
+| - r563_set r_mean_um vs minute: ρ = -0.08 (p = 0.72, not significant), -0.4% per minute                                                          |
+====================================================================================================================================================
