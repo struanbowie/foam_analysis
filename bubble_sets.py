@@ -437,19 +437,52 @@ def fit_decays(m, ranges, col="n_bubbles", offset=False, set_name=None):
     return pd.DataFrame(rows)
 
 
+def fit_lines(m, ranges, col="r_mean_um", set_name=None):
+    """Straight-line fit y = a + b·t of one metric over each range (same ranges as fit_decays, so DECAY_FITS can be
+    reused); t = timestamp t_s from the first train of the range. Returns per range: start value a, slope b per s
+    and per min ± s.e., relative change per min (b / a), R², p (slope ≠ 0) and the number of points."""
+    from scipy import stats
+    rows = []
+    g_all = m if set_name is None else m[m["set"] == set_name]
+    for ra, ta, rb, tb in _decay_ranges(ranges):
+        g, err = _select_range(g_all, ra, ta, rb, tb)
+        g = g.dropna(subset=[col])
+        row = dict(set=g["set"].iloc[0] if len(g) else set_name, run=ra, start_run=ra, start_train=ta, end_run=rb,
+                   end_train=tb, label=range_label(ra, ta, rb, tb), metric=col, n_points=len(g),
+                   seq_lo=int(g["seq"].min()) if len(g) else np.nan, seq_hi=int(g["seq"].max()) if len(g) else np.nan)
+        if err:
+            rows.append(dict(row, note=err))
+            continue
+        if len(g) < 3:
+            rows.append(dict(row, note=f"only {len(g)} points (need 3)"))
+            continue
+        t = (g["t_s"] - g["t_s"].iloc[0]).to_numpy(float)
+        res = stats.linregress(t, g[col].to_numpy(float))
+        rows.append(dict(row, t0_s=g["t_s"].iloc[0], t_end_s=g["t_s"].iloc[-1], intercept=res.intercept,
+                         intercept_se=res.intercept_stderr, slope_per_s=res.slope, slope_se=res.stderr,
+                         slope_per_min=60 * res.slope, slope_per_min_se=60 * res.stderr,
+                         rel_per_min=60 * res.slope / res.intercept if res.intercept else np.nan,
+                         r2=res.rvalue ** 2, p=res.pvalue, note=""))
+    return pd.DataFrame(rows)
+
+
 def _draw_fits(ax, g, fits, x, colors):
-    """Fitted decay curves on a timeline axes (x = t_s directly; x = seq / slot by interpolating time to position)."""
+    """Fitted decay curves (fit_decays) or straight lines (fit_lines) on a timeline axes (x = t_s directly;
+    x = seq / slot by interpolating time to position)."""
     for f in fits.itertuples():
-        if not np.isfinite(getattr(f, "tau_s", np.nan)):
+        linear = hasattr(f, "slope_per_s")
+        if not np.isfinite(getattr(f, "slope_per_s" if linear else "tau_s", np.nan)):
             continue
         tt = np.linspace(0, f.t_end_s - f.t0_s, 60)
-        yy = decay_model(tt, f.N0, f.tau_s, f.N_inf)
+        yy = f.intercept + f.slope_per_s * tt if linear else decay_model(tt, f.N0, f.tau_s, f.N_inf)
         r = g[g["seq"].between(f.seq_lo, f.seq_hi)].sort_values("t_s")
         if r.empty:
             continue
         xx = tt + f.t0_s if x == "t_s" else np.interp(tt + f.t0_s, r["t_s"], r[x])
         ax.plot(xx, yy, "-", color=colors.get(f.run, INK), lw=2.2, alpha=0.6, zorder=4)
-        ax.annotate(f"τ = {f.tau_s:.0f} s" if not f.note else "no clear decay", (xx[len(xx) // 2], yy[len(yy) // 2]), xytext=(4, 8),
+        text = (f"{f.slope_per_min:+.2f}/min" if linear else
+                f"τ = {f.tau_s:.0f} s" if not f.note else "no clear decay")
+        ax.annotate(text, (xx[len(xx) // 2], yy[len(yy) // 2]), xytext=(4, 8),
                     textcoords="offset points", fontsize=8, color=colors.get(f.run, INK), fontweight="bold")
 
 
