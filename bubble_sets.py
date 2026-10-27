@@ -332,16 +332,47 @@ def plot_size_timeline(bubbles, m, var="r_eq_um", label="equivalent radius [µm]
 # Exponential decay of the bubble count after each scan
 # ----------------------------------------------------------------------------
 def _decay_ranges(spec):
-    """{run: (first, last)} or {run: [(first, last), ...]} or [(run, first, last), ...] -> [(run, first, last)]."""
+    """Normalise DECAY_FITS to [(start_run, start_train, end_run, end_train)]. Accepted forms:
+    {run: (first, last)} or {run: [(first, last), ...]}     within one run
+    [(run, first, last), ...]                               within one run
+    [(start_run, start_train, end_run, end_train), ...]     across runs, e.g. ("r562", 4, "r563", 3)
+    [(("r562", 4), ("r563", 3)), ...]                       the same, as two (run, train) pairs
+    Ranges are inclusive and follow the set's run order."""
     if not spec:
         return []
+    out = []
     if isinstance(spec, dict):
-        out = []
         for run, v in spec.items():
             for lo, hi in ([v] if np.ndim(v) == 1 and len(v) == 2 and not isinstance(v[0], (list, tuple)) else v):
-                out.append((run, int(lo), int(hi)))
+                out.append((run, int(lo), run, int(hi)))
         return out
-    return [(r, int(lo), int(hi)) for r, lo, hi in spec]
+    for r in spec:
+        if len(r) == 2:                                   # ((run, train), (run, train))
+            (ra, ta), (rb, tb) = r
+        elif len(r) == 3:
+            ra, ta, tb = r
+            rb = ra
+        else:
+            ra, ta, rb, tb = r
+        out.append((ra, int(ta), rb, int(tb)))
+    return out
+
+
+def range_label(ra, ta, rb, tb):
+    return f"{ra} t{ta}–{tb}" if ra == rb else f"{ra} t{ta} → {rb} t{tb}"
+
+
+def _select_range(g_all, ra, ta, rb, tb):
+    """Rows of the set from (ra, ta) to (rb, tb), inclusive, in timeline order (may span several runs)."""
+    for sname, g in g_all.groupby("set", sort=False):
+        a = g[(g["run"] == ra) & (g["train"] == ta)]
+        b = g[(g["run"] == rb) & (g["train"] == tb)]
+        if len(a) and len(b):
+            lo, hi = sorted((int(a["seq"].iloc[0]), int(b["seq"].iloc[0])))
+            return g[g["seq"].between(lo, hi)].sort_values("seq"), None
+    have = set(zip(g_all["run"], g_all["train"]))
+    missing = [f"{r} t{t}" for r, t in ((ra, ta), (rb, tb)) if (r, t) not in have]
+    return g_all.iloc[:0], f"no frame for {', '.join(missing)}" if missing else "start and end are in different sets"
 
 
 def decay_model(t, n0, tau, n_inf=0.0):
@@ -351,18 +382,24 @@ def decay_model(t, n0, tau, n_inf=0.0):
 
 def fit_decays(m, ranges, col="n_bubbles", offset=False, set_name=None):
     """Fit one exponential decay per range: ranges as in _decay_ranges, e.g. {"r561": (4, 9)} = trains 4..9 of
-    r561 (inclusive). Time is the timestamp t_s, measured from the first train of the range.
+    r561, or ("r562", 4, "r563", 3) = r562 train 4 to r563 train 3 (inclusive). Time is the timestamp t_s from the
+    first train of the range, so a range across runs includes the real pause between them.
     offset=False: N = N0 exp(-t/τ) (2 parameters; robust with 4-6 points).
     offset=True:  N = N∞ + (N0 - N∞) exp(-t/τ) (3 parameters; needs the curve to level off within the range).
     Returns one row per range: N0, τ [s] ± s.e., half-life, N∞, R², number of points, and the rate 1/τ."""
     from scipy.optimize import curve_fit
     rows = []
     g_all = m if set_name is None else m[m["set"] == set_name]
-    for run, lo, hi in _decay_ranges(ranges):
-        g = g_all[(g_all["run"] == run) & g_all["train"].between(lo, hi)].sort_values("t_s")
+    for ra, ta, rb, tb in _decay_ranges(ranges):
+        g, err = _select_range(g_all, ra, ta, rb, tb)
         g = g.dropna(subset=[col])
-        row = dict(set=g["set"].iloc[0] if len(g) else set_name, run=run, metric=col, first_train=lo, last_train=hi,
-                   n_points=len(g), offset=offset)
+        row = dict(set=g["set"].iloc[0] if len(g) else set_name, run=ra, start_run=ra, start_train=ta, end_run=rb,
+                   end_train=tb, label=range_label(ra, ta, rb, tb), metric=col, n_points=len(g), offset=offset,
+                   seq_lo=int(g["seq"].min()) if len(g) else np.nan, seq_hi=int(g["seq"].max()) if len(g) else np.nan,
+                   runs_spanned=", ".join(dict.fromkeys(g["run"])) if len(g) else "")
+        if err:
+            rows.append(dict(row, note=err))
+            continue
         need = 4 if offset else 3
         if len(g) < need:
             rows.append(dict(row, note=f"only {len(g)} points (need {need})"))
@@ -407,7 +444,7 @@ def _draw_fits(ax, g, fits, x, colors):
             continue
         tt = np.linspace(0, f.t_end_s - f.t0_s, 60)
         yy = decay_model(tt, f.N0, f.tau_s, f.N_inf)
-        r = g[(g["run"] == f.run) & g["train"].between(f.first_train, f.last_train)].sort_values("t_s")
+        r = g[g["seq"].between(f.seq_lo, f.seq_hi)].sort_values("t_s")
         if r.empty:
             continue
         xx = tt + f.t0_s if x == "t_s" else np.interp(tt + f.t0_s, r["t_s"], r[x])
@@ -426,13 +463,13 @@ def plot_decays(m, fits, col="n_bubbles", ylabel="bubble count"):
         for f in fits.itertuples():
             if not np.isfinite(getattr(f, "tau_s", np.nan)):
                 continue
-            g = m[(m["set"] == f.set) & (m["run"] == f.run) & m["train"].between(f.first_train, f.last_train)].sort_values("t_s")
+            g = m[(m["set"] == f.set) & m["seq"].between(f.seq_lo, f.seq_hi)].sort_values("t_s")
             t = g["t_s"] - f.t0_s
             c = colors.get(f.run, INK)
             ax.plot(t, g[col], "o", color=c, ms=7, mec="white", mew=1.2, zorder=3)
             tt = np.linspace(0, t.max(), 80)
             ax.plot(tt, decay_model(tt, f.N0, f.tau_s, f.N_inf), "--" if f.note else "-", color=c, lw=2,
-                    label=f"{f.run} t{f.first_train}–{f.last_train}: " +
+                    label=f"{f.label}: " +
                           (f"τ = {f.tau_s:.0f} ± {f.tau_se:.0f} s" if not f.note else f.note))
         ax.set_xlabel("time since the first train of the fit range [s]")
         ax.set_ylabel(ylabel)
